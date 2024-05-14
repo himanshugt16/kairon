@@ -19569,7 +19569,8 @@ def test_get_bot_settings():
                               'website_data_generator_depth_search_limit': 2,
                               'whatsapp': 'meta',
                               'cognition_collections_limit': 3,
-                              'cognition_columns_per_collection_limit': 5}
+                              'cognition_columns_per_collection_limit': 5,
+                              'integrations_per_user_limit':2 }
 
 
 def test_update_analytics_settings_with_empty_value():
@@ -19645,7 +19646,8 @@ def test_update_analytics_settings():
                               'website_data_generator_depth_search_limit': 2,
                               'whatsapp': 'meta',
                               'cognition_collections_limit': 3,
-                              'cognition_columns_per_collection_limit': 5}
+                              'cognition_columns_per_collection_limit': 5,
+                              'integrations_per_user_limit':2 }
 
 
 def test_delete_channels_config():
