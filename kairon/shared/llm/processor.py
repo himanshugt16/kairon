@@ -54,22 +54,31 @@ class LLMProcessor(LLMBase):
         await self.__delete_collections()
         count = 0
         processor = CognitionDataProcessor()
-        collection_groups = list(CognitionData.objects.aggregate([
-            {'$match': {'bot': self.bot}},
-            {'$group': {'_id': "$collection", 'content': {'$push': "$$ROOT"}}},
-            {'$project': {'collection': "$_id", 'content': 1, '_id': 0}}
-        ]))
-        for collections in collection_groups:
-            collection = f"{self.bot}_{collections['collection']}{self.suffix}" if collections[
-                'collection'] else f"{self.bot}{self.suffix}"
+        # collection_groups = list(CognitionData.objects.aggregate([
+        #     {'$match': {'bot': self.bot}},
+        #     {'$group': {'_id': "$collection", 'content': {'$push': "$$ROOT"}}},
+        #     {'$project': {'collection': "$_id", 'content': 1, '_id': 0}}
+        # ]))
+
+        collections_data = CognitionData.objects(bot=self.bot)
+        collection_groups = {}
+        for content in collections_data:
+            collection_name = content.get('collection') or ""
+            if collection_name not in collection_groups:
+                collection_groups[collection_name] = []
+            collection_groups[collection_name].append(content)
+
+        for collection_name, contents in collection_groups.items():
+            collection = f"{self.bot}_{collection_name}{self.suffix}" if collection_name else f"{self.bot}{self.suffix}"
             await self.__create_collection__(collection)
-            for content in tqdm(collections['content'], desc="Training FAQ"):
+            for content in tqdm(contents, desc="Training FAQ"):
                 if content['content_type'] == CognitionDataType.json.value:
                     metadata = processor.find_matching_metadata(self.bot, content['data'], content.get('collection'))
                     search_payload, embedding_payload = Utility.retrieve_search_payload_and_embedding_payload(
                         content['data'], metadata)
                 else:
                     search_payload, embedding_payload = {'content': content["data"]}, content["data"]
+
                 embeddings = await self.get_embedding(embedding_payload, user, invocation=invocation)
                 points = [{'id': content['vector_id'], 'vector': embeddings, 'payload': search_payload}]
                 await self.__collection_upsert__(collection, {'points': points},
