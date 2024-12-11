@@ -8730,9 +8730,9 @@ class MongoProcessor:
                     data_type = metadata_map[column]
                     try:
                         if data_type == 'int':
-                            row[column] = int(value) if value else None
+                            row[column] = int(value)
                         elif data_type == 'float':
-                            row[column] = float(value) if value else None
+                            row[column] = float(value)
                     except (ValueError, TypeError):
                         raise ValueError(
                             f"Error converting column '{column}' with value '{value}' to type '{data_type}'")
