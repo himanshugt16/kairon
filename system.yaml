@@ -262,3 +262,5 @@ async_callback_action:
   pyscript:
     trigger_task: ${CALLBACK_PYSCRIPT_TRIGGER_TASK:false}
 
+meta:
+  url: ${META_URL:"https://graph.facebook.com/v21.0"}

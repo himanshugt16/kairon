@@ -184,6 +184,7 @@ class TOKEN_TYPE(str, Enum):
     DYNAMIC = "dynamic"
     CHANNEL = "channel"
     REFRESH = "refresh"
+    DATA_INTEGRATION = "data_integration"
 
 
 class ModelTestType(str, Enum):

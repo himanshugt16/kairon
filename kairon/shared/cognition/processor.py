@@ -10,7 +10,9 @@ from kairon.exceptions import AppException
 from kairon.shared.actions.data_objects import PromptAction, DatabaseAction
 from kairon.shared.cognition.data_objects import CognitionData, CognitionSchema, ColumnMetadata, CollectionData
 from kairon.shared.data.constant import DEFAULT_LLM
+from kairon.shared.data.data_objects import Integrations
 from kairon.shared.data.processor import MongoProcessor
+from kairon.shared.data.utils import DataUtility
 from kairon.shared.models import CognitionDataType, CognitionMetadataType, VaultSyncEventType
 
 
@@ -655,3 +657,129 @@ class CognitionDataProcessor:
     def _validate_collection_exists(self, collection_name: str):
         if not CognitionSchema.objects(collection_name=collection_name).first():
             raise AppException(f"Collection '{collection_name}' does not exist.")
+
+    @staticmethod
+    def save_data_integration_config(configuration: Dict, bot: Text, user: Text, event_type: Text = None):
+        """
+        save or updates data integration configuration
+        :param configuration: config dict
+        :param bot: bot id
+        :param user: user id
+        :param event_type: event type
+        :return: None
+        """
+        try:
+            integration = Integrations.objects(bot= bot, connector_type = configuration['connector_type'], event_type = event_type).get()
+            integration.config = configuration['config']
+            integration.meta_config = configuration['meta_config']
+        except DoesNotExist:
+            integration = Integrations(**configuration)
+        integration.bot = bot
+        integration.user = user
+        integration.event_type = event_type
+        integration.timestamp = datetime.utcnow()
+
+        if 'meta_config' in configuration:
+            integration.meta_config = configuration['meta_config']
+
+        integration.save()
+        integration_endpoint = DataUtility.get_integration_endpoint(integration)
+        return integration_endpoint
+
+    # @staticmethod
+    # def preprocess_menu_data(json_data, event_type):
+    #     """
+    #     Preprocess the JSON data received from Petpooja to extract relevant fields for knowledge base synchronization.
+    #     """
+    #     category_map = {cat["categoryid"]: cat["categoryname"] for cat in json_data.get("categories", [])}
+    #
+    #     default_condition = "new"
+    #     default_origin_country = "IN"
+    #     default_link = "https://www.kairon.com/"
+    #     default_brand = "Sattva"
+    #     default_image_link = "https://www.kairon.com/default-image.jpg"
+    #     default_description = "No description available" # Default image link
+    #
+    #     data = []
+    #     for item in json_data.get("items", []):
+    #         category_name = category_map.get(item.get("item_categoryid"), "General")
+    #         data.append({
+    #             "id": item["itemid"],
+    #             "title": item["itemname"],
+    #             "description": item.get("itemdescription") or default_description,
+    #             "price": float(item.get("price", 0.0)),
+    #             "facebook_product_category": f"Food and drink > {category_name}",
+    #             "availability": "in stock" if int(item.get("in_stock", 0)) > 0 else "out of stock",
+    #             "image_link": item.get("item_image_url") or default_image_link,
+    #             "link": default_link,
+    #             "brand": default_brand,
+    #             "condition": default_condition,
+    #             "origin_country": default_origin_country
+    #         })
+    #
+    #     return data
+
+    @staticmethod
+    def preprocess_menu_data(json_data, event_type):
+        """
+        Preprocess the JSON data received from Petpooja to extract relevant fields for knowledge base synchronization.
+        If event_type is "push_menu", all fields are assigned default values when missing.
+        Otherwise, only "id" is mandatory, and other fields are included only if present.
+        """
+        category_map = {cat["categoryid"]: cat["categoryname"] for cat in json_data.get("categories", [])}
+
+        # Default values (only used for "push_menu" event type)
+        defaults = {
+            "description": "No description available",
+            "price": 0.0,
+            "facebook_product_category": "Food and drink > General",
+            "availability": "out of stock",
+            "image_link": "https://www.kairon.com/default-image.jpg",
+            "link": "https://www.kairon.com/",
+            "brand": "Sattva",
+            "condition": "new",
+            "origin_country": "IN",
+        }
+
+        data = []
+        for item in json_data.get("items", []):
+            category_name = category_map.get(item.get("item_categoryid"), "General")
+
+            transformed_item = {"id": item["itemid"]}
+
+            if event_type == "push_menu":
+                transformed_item.update({
+                    "title": item["itemname"],
+                    "description": item.get("itemdescription") or defaults["description"],
+                    "price": float(item.get("price")) or defaults["price"],
+                    "facebook_product_category": f"Food and drink > {category_name}",
+                    "availability": "in stock" if int(item.get("in_stock", 0)) > 0 else defaults["availability"],
+                    "image_link": item.get("item_image_url") or defaults["image_link"],
+                    "link": defaults["link"],
+                    "brand": defaults["brand"],
+                    "condition": defaults["condition"],
+                    "origin_country": defaults["origin_country"],
+                })
+            else:
+                # Only include fields that exist in item, using given or default values
+                optional_fields = {
+                    "title": item.get("itemname") if "itemname" in item else None,
+                    "description": item.get("itemdescription") or defaults["description"] if "itemdescription" in item else None,
+                    "price": float(item.get("price")) or defaults["price"] if "price" in item else None,
+                    "facebook_product_category": f"Food and drink > {category_name}" if "item_categoryid" in item else None,
+                    "availability": (
+                        "in stock" if int(item.get("in_stock", 0)) > 0 else defaults["availability"]
+                    ) if "in_stock" in item else None,
+                    "image_link": item.get("item_image_url") or defaults["image_link"] if "item_image_url" in item else None,
+                    "link": item.get("link") or defaults["link"] if "link" in item else None,
+                    "brand": item.get("brand") or defaults["brands"] if "brand" in item else None,
+                    "condition": item.get("condition") or defaults["condition"] if "condition" in item else None,
+                    "origin_country": item.get("origin_country") or defaults["origin_country"] if "origin_country" in item else None,
+                }
+
+                # Filter out None values to only keep present fields
+                transformed_item.update({k: v for k, v in optional_fields.items() if v is not None})
+
+            data.append(transformed_item)
+
+        return data

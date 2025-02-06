@@ -1047,3 +1047,18 @@ class UserOrgMappings(Document):
     timestamp = DateTimeField(default=datetime.utcnow)
 
     meta = {"indexes": [{"fields": ["user", ("user", "feature_type", "organization")]}]}
+
+
+@auditlogger.log
+@push_notification.apply
+class Integrations(Auditlog):
+    bot = StringField(required=True)
+    connector_type = StringField(required=True)
+    # connector_type = StringField(required=True, choices=Utility.get_channels)
+    config = DictField(required=True)
+    event_type = StringField(required=True, default=None)
+    user = StringField(required=True)
+    timestamp = DateTimeField(default=datetime.utcnow)
+    meta_config = DictField()
+
+    meta = {"indexes": [{"fields": ["bot", "connector_type"]}]}

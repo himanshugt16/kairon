@@ -1349,3 +1349,12 @@ class ScheduleActionRequest(BaseModel):
 
         return values
 
+class MetaConfig(BaseModel):
+    access_token: str
+    catalog_id: str
+
+class DataIntegrationRequest(BaseModel):
+    connector_type: str
+    config: dict
+    meta_config: Optional[MetaConfig]
+

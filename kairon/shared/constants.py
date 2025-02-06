@@ -82,6 +82,7 @@ class EventClass(str, Enum):
     scheduler_evaluator = "scheduler_evaluator"
     content_importer = "content_importer"
     mail_channel_read_mails = "email_channel_read_mails"
+    data_integration = "data_integration"
 
 
 class EventRequestType(str, Enum):
@@ -118,6 +119,9 @@ class ChannelTypes(str, Enum):
     BUSINESS_MESSAGES = "business_messages"
     LINE = "line"
     MAIL = "mail"
+
+class DataIntegrationTypes(str, Enum):
+    PETPOOJA = "petpooja"
 
 class ElementTypes(str, Enum):
     LINK = "link"
