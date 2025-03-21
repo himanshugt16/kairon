@@ -83,15 +83,20 @@ class DataIntegrationEvent(EventsBase):
             DataIntegrationLogProcessor.add_log(self.bot, self.user, validation_errors=error_summary,
                                                 event_status=EVENT_STATUS.SAVE.value)
             if initiate_import:
-                await cognition_processor.upsert_data("id", "catalog",
+                result = await cognition_processor.upsert_data_new("id", "catalog",
                                                       self.event_type.lower(), knowledge_vault_data, self.bot, self.user)
+                remaining_primary_keys = result.get("stale_ids", [])
                 integrations_doc = Integrations.objects(bot = self.bot, connector_type = self.integration, event_type = self.event_type).first()
                 if integrations_doc and 'meta_config' in integrations_doc:
                     meta_processor = MetaProcessor(integrations_doc.meta_config.get('access_token'), integrations_doc.meta_config.get('catalog_id'))
 
                     if self.event_type == "push_menu":
                         processed_data = meta_processor.preprocess_data(self.data, "CREATE")
-                        await meta_processor.push_meta_catalog(processed_data)
+                        await meta_processor.push_meta_catalog(processed_data) # Update items of push menu will be handled in CREATE itself
+
+                        if remaining_primary_keys:
+                            delete_payload = meta_processor.preprocess_delete_data(remaining_primary_keys)
+                            await meta_processor.delete_meta_catalog(delete_payload)
                     else:
                         processed_data = meta_processor.preprocess_data(self.data,"UPDATE")
                         await meta_processor.update_meta_catalog(processed_data)

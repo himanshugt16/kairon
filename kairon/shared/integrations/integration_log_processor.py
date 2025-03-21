@@ -215,27 +215,47 @@ class DataIntegrationLogProcessor:
     #         for item in data
     #     ]
 
+    # @staticmethod
+    # def extract_knowledge_vault_data(data, event_type):
+    #     """
+    #     Extracts only the required fields for knowledge vault storage from processed menu data.
+    #     If event_type is "push_menu", all fields are mandatory.
+    #     Otherwise, only "id" is mandatory, and other fields are included only if present.
+    #     """
+    #     required_fields = ["title", "description", "price", "facebook_product_category", "availability"]
+    #
+    #     return [
+    #         {
+    #             "id": item["id"],
+    #             **(
+    #                 {field: item[field] for field in required_fields}  # Include all fields for "push_menu"
+    #                 if event_type == "push_menu"
+    #                 else {field: item[field] for field in required_fields if field in item}
+    #             # Only present fields otherwise
+    #             )
+    #         }
+    #         for item in data
+    #     ]
+
     @staticmethod
     def extract_knowledge_vault_data(data, event_type):
         """
-        Extracts only the required fields for knowledge vault storage from processed menu data.
-        If event_type is "push_menu", all fields are mandatory.
-        Otherwise, only "id" is mandatory, and other fields are included only if present.
+        Extracts required fields for knowledge vault storage from processed menu data.
+        - If event_type is "push_menu", include all required fields.
+        - Otherwise, include only available fields along with "id".
         """
         required_fields = ["title", "description", "price", "facebook_product_category", "availability"]
 
-        return [
-            {
-                "id": item["id"],
-                **(
-                    {field: item[field] for field in required_fields}  # Include all fields for "push_menu"
-                    if event_type == "push_menu"
-                    else {field: item[field] for field in required_fields if field in item}
-                # Only present fields otherwise
-                )
-            }
-            for item in data
-        ]
+        extracted_data = []
+        for item in data:
+            entry = {"id": item["id"]}
+            if event_type == "push_menu":
+                entry.update({field: item[field] for field in required_fields})
+            else:
+                entry.update({field: item[field] for field in required_fields if field in item})
+            extracted_data.append(entry)
+
+        return extracted_data
 
     @staticmethod
     def validate_item_ids(json_data):

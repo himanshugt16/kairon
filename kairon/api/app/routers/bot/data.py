@@ -351,7 +351,7 @@ async def knowledge_vault_sync(
             error_code=400
         )
 
-    await cognition_processor.upsert_data(primary_key_col.lower(), collection_name.lower(), event_type.lower(), data,
+    await cognition_processor.upsert_data_new(primary_key_col.lower(), collection_name.lower(), event_type.lower(), data,
                                     current_user.get_bot(), current_user.get_user())
 
     return Response(
