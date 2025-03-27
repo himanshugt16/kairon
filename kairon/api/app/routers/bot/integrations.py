@@ -4,7 +4,7 @@ from fastapi import Security, APIRouter, Path
 from starlette.requests import Request
 
 from kairon.api.models import Response
-from kairon.events.definitions.data_integration import DataIntegrationEvent
+from kairon.events.definitions.data_integration import CatalogIntegrationEvent
 from kairon.shared.auth import Authentication
 from kairon.shared.cognition.processor import CognitionDataProcessor
 from kairon.shared.constants import DataIntegrationTypes
@@ -35,7 +35,7 @@ async def sync_data(
     # print(items)
     # return {"message": body}
 
-    event = DataIntegrationEvent(
+    event = CatalogIntegrationEvent(
         bot=bot,
         user=current_user.get_user(),
         integration = integration,

@@ -16,7 +16,7 @@ from kairon.shared.integrations.data_objects import DataIntegrationLogs
 from kairon.shared.models import CognitionMetadataType
 
 
-class DataIntegrationLogProcessor:
+class CatalogIntegrationLogProcessor:
     """
     Log processor for content importer event.
     """
@@ -156,7 +156,7 @@ class DataIntegrationLogProcessor:
         return CognitionSchema.objects(bot=bot, collection_name="catalog").first() is not None
 
     @staticmethod
-    def create_catalog_collection(bot: str, user: str):
+    def create_catalog_collection(bot: str, user: str, data):
         """
         Creates a 'catalogue_table' collection in CognitionSchema for the given bot with predefined metadata fields.
         """
@@ -187,8 +187,10 @@ class DataIntegrationLogProcessor:
             for col, data_type in column_definitions
         ]
 
+        restaurant_name = data["restaurants"][0]["details"]["restaurantname"]
+
         catalog_schema = CognitionSchemaRequest(
-            collection_name = "catalog",
+            collection_name = f"catalog_{restaurant_name}",
             metadata = metadata
         )
 
@@ -289,3 +291,14 @@ class DataIntegrationLogProcessor:
 
             if item["item_categoryid"] not in valid_category_ids:
                 raise AppException(f"Invalid 'item_categoryid' {item['item_categoryid']} in item: {item}")
+
+    @staticmethod
+    def is_catalog_sync_allowed(bot: str):
+        """
+        Checks if catalog sync is allowed for the given bot.
+        """
+        bot_settings = BotSettings.objects(bot=bot).only("allow_catalog_sync").first()
+        if not bot_settings or not bot_settings.allow_catalog_sync:
+            raise AppException("Catalog Sync is not allowed! Contact support")
+        else:
+            return bot_settings.allow_catalog_sync

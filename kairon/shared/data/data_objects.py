@@ -925,6 +925,7 @@ class BotSettings(Auditlog):
     cognition_columns_per_collection_limit = IntField(default=5)
     integrations_per_user_limit = IntField(default=3)
     live_agent_enabled = BooleanField(default=False)
+    allow_catalog_sync = BooleanField(default=True)
 
     meta = {"indexes": [{"fields": ["bot", ("bot", "status")]}]}
 
