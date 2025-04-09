@@ -41,14 +41,21 @@ class CatalogIntegrationEvent(EventsBase):
         if CatalogIntegrationLogProcessor.is_catalog_collection_exists(self.bot) is False:
             CatalogIntegrationLogProcessor.create_catalog_collection(bot=self.bot, user=self.user, data=self.data)
         CatalogIntegrationLogProcessor.validate_item_ids(request)
-        CatalogIntegrationLogProcessor.validate_item_fields(request, self.event_type)
-        self.data = CognitionDataProcessor.preprocess_menu_data(request, self.event_type)
+        CatalogIntegrationLogProcessor.validate_item_fields(request, self.event_type, "metadata/catalog_metadata.yml")
+        request = CognitionDataProcessor.preprocess_field_update_request(request,self.event_type)
+        self.data = CognitionDataProcessor.preprocess_menu_data(self.bot, request, self.event_type,"metadata/catalog_metadata.yml")
+        CatalogIntegrationLogProcessor.add_log(self.bot, self.user, self.integration, self.event_type, event_status=EVENT_STATUS.INITIATED.value, raw_payload = request)
         return is_event_data
 
     def enqueue(self, **kwargs):
         """
         Send event to event server
         """
+        if not CatalogIntegrationLogProcessor.is_ai_enabled(self.bot):
+            CatalogIntegrationLogProcessor.add_log(self.bot, self.user,
+                                               exception="Sync to knowledge vault is not allowed in this bot. Contact Support!!",
+                                               status="Failure",
+                                               event_status=EVENT_STATUS.FAIL.value)
         payload = {
             'bot': self.bot,
             'user': self.user,
@@ -90,6 +97,11 @@ class CatalogIntegrationEvent(EventsBase):
                 remaining_primary_keys = result.get("stale_ids", [])
                 integrations_doc = Integrations.objects(bot = self.bot, connector_type = self.integration, event_type = self.event_type).first()
                 if integrations_doc and 'meta_config' in integrations_doc:
+                    if not CatalogIntegrationLogProcessor.is_meta_enabled(self.bot):
+                        CatalogIntegrationLogProcessor.add_log(self.bot, self.user,
+                                                               exception="Sync to Meta is not allowed in this bot. Contact Support!!",
+                                                               status="Failure",
+                                                               event_status=EVENT_STATUS.FAIL.value)
                     meta_processor = MetaProcessor(integrations_doc.meta_config.get('access_token'), integrations_doc.meta_config.get('catalog_id'))
 
                     if self.event_type == "push_menu":

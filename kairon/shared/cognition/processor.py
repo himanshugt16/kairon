@@ -1,3 +1,4 @@
+import json
 from datetime import datetime
 from typing import Text, Dict, Any, List
 
@@ -11,7 +12,7 @@ from kairon.exceptions import AppException
 from kairon.shared.actions.data_objects import PromptAction, DatabaseAction
 from kairon.shared.cognition.data_objects import CognitionData, CognitionSchema, ColumnMetadata, CollectionData
 from kairon.shared.data.constant import DEFAULT_LLM
-from kairon.shared.data.data_objects import Integrations
+from kairon.shared.data.data_objects import Integrations, BotSyncConfig
 from kairon.shared.data.processor import MongoProcessor
 from kairon.shared.data.utils import DataUtility
 from kairon.shared.models import CognitionDataType, CognitionMetadataType, VaultSyncEventType
@@ -723,69 +724,109 @@ class CognitionDataProcessor:
     #     return data
 
     @staticmethod
-    def preprocess_menu_data(json_data, event_type):
+    def preprocess_menu_data(bot, json_data, event_type, metadata_path):
         """
-        Preprocess the JSON data received from Petpooja to extract relevant fields for knowledge base synchronization.
-        If event_type is "push_menu", all fields are assigned default values when missing.
-        Otherwise, only "id" is mandatory, and other fields are included only if present.
+        Preprocess the JSON data received from Petpooja to extract relevant fields for knowledge base or meta synchronization.
+        Handles different event types ("push_menu" vs others) and uses metadata to drive the field extraction and defaulting.
         """
-        category_map = {cat["categoryid"]: cat["categoryname"] for cat in json_data.get("categories", [])}
+        with open(metadata_path, "r") as f:
+            metadata = json.load(f)
 
-        # Default values (only used for "push_menu" event type)
-        defaults = {
-            "description": "No description available",
-            "price": 0.0,
-            "facebook_product_category": "Food and drink > General",
-            "availability": "out of stock",
-            "image_link": "https://www.kairon.com/default-image.jpg",
-            "link": "https://www.kairon.com/",
-            "brand": "Sattva",                                             #TODO
-            "condition": "new",
-            "origin_country": "IN",                                        #TODO check acronym madatory or not
+        category_map = {
+            cat["categoryid"]: cat["categoryname"]
+            for cat in json_data.get("categories", [])
         }
 
         data = []
         for item in json_data.get("items", []):
-            category_name = category_map.get(item.get("item_categoryid"), "General")
+            transformed_item = {
+                "id": item["itemid"]
+            }
 
-            transformed_item = {"id": item["itemid"]}
+            for sync_target, fields in metadata.items():
+                transformed_item[sync_target] = {}
 
-            if event_type == "push_menu":
-                transformed_item.update({
-                    "title": item["itemname"],
-                    "description": item.get("itemdescription") or defaults["description"],
-                    "price": float(item.get("price")) or defaults["price"],
-                    "facebook_product_category": f"Food and drink > {category_name}",
-                    "availability": "in stock" if int(item.get("in_stock", 0)) > 0 else defaults["availability"],
-                    "image_link": item.get("item_image_url") or defaults["image_link"],
-                    "link": defaults["link"],
-                    "brand": defaults["brand"],
-                    "condition": defaults["condition"],
-                    "origin_country": defaults["origin_country"],
-                })
-            else:
-                # Only include fields that exist in item, using given or default values
-                optional_fields = {
-                    "title": item.get("itemname") if "itemname" in item else None,
-                    "description": item.get("itemdescription") or defaults["description"] if "itemdescription" in item else None,
-                    "price": float(item.get("price")) or defaults["price"] if "price" in item else None,
-                    "facebook_product_category": f"Food and drink > {category_name}" if "item_categoryid" in item else None,
-                    "availability": (
-                        "in stock" if int(item.get("in_stock", 0)) > 0 else defaults["availability"]
-                    ) if "in_stock" in item else None,
-                    "image_link": item.get("item_image_url") or defaults["image_link"] if "item_image_url" in item else None,
-                    "link": item.get("link") or defaults["link"] if "link" in item else None,
-                    "brand": item.get("brand") or defaults["brands"] if "brand" in item else None,
-                    "condition": item.get("condition") or defaults["condition"] if "condition" in item else None,
-                    "origin_country": item.get("origin_country") or defaults["origin_country"] if "origin_country" in item else None,
-                }
+                for target_field, field_config in fields.items():
+                    source_key = field_config.get("source")
+                    default_value = field_config.get("default")
 
-                # Filter out None values to only keep present fields
-                transformed_item.update({k: v for k, v in optional_fields.items() if v is not None})
+                    if event_type == "push_menu":
+                        value = item.get(source_key) if source_key else None
+
+                        if target_field == "availability":
+                            value = "in stock" if int(value or 0) > 0 else default_value
+                        elif target_field == "facebook_product_category":
+                            category_id = value or ""
+                            value = f"Food and drink > {category_map.get(category_id, 'General')}"
+                        elif target_field == "image_link":
+                            value = CognitionDataProcessor.resolve_image_link(bot, item["itemid"])
+                        if not value:
+                            value = default_value
+                        transformed_item[sync_target][target_field] = value
+
+                    else:
+                        if source_key and source_key in item:
+                            value = item.get(source_key)
+
+                            if target_field == "availability":
+                                value = "in stock" if int(value or 0) > 0 else default_value
+                            elif target_field == "facebook_product_category":
+                                category_id = value
+                                value = f"Food and drink > {category_map.get(category_id, 'General')}"
+                            elif target_field == "image_link":
+                                value = CognitionDataProcessor.resolve_image_link(bot, item["itemid"])
+                            transformed_item[sync_target][target_field] = value
 
             data.append(transformed_item)
 
         return data
+
+    @staticmethod
+    def preprocess_field_update_request(json_data, event_type):
+        if event_type == "push_menu":
+            return json_data
+
+        in_stock_str = "No" if not json_data["inStock"] else "Yes"
+
+        result = {"items": []}
+
+        for item_id in json_data["itemID"]:
+            doc = CollectionData.objects(data__itemid=item_id).first()
+            if doc:
+                item_data = doc.data.copy()
+                item_data["in_stock"] = in_stock_str
+                result["items"].append(item_data)
+
+        return result
+
+    @staticmethod
+    def resolve_image_link(bot: str, item_id: str):
+        """
+        Resolve image link based on BotSyncConfig:
+        - If logo_s3_url is enabled, return None (caller should use item's image field).
+        - Otherwise, look up in fallback collection <Customer>_<Branch>_catalog_images and return image_s3_url.
+        """
+        config = BotSyncConfig.objects(branch_bot=bot).first()
+        if not config:
+            raise AppException("No bot sync config found while image resolving")
+
+        default_logo_s3_config = config.default_logo_s3 or {}
+        is_enabled = default_logo_s3_config.get("isenabled", False)
+
+        if is_enabled:
+            image_link = default_logo_s3_config.get("image_s3_url")
+            if image_link:
+                return image_link
+            raise AppException("Cannot resolve image for {item_id} in bot sync config")
+
+        customer = config.customer.replace(" ", "_")
+        branch = config.branch_name.replace(" ", "_")
+        catalog_images_collection = f"{customer}_{branch}_catalog_images"
+        document = CollectionData.objects(collection_name = catalog_images_collection, data__itemid=item_id)
+        if not document or not document.get("image_s3_url"):
+            AppException(f"Cannot resolbe image for {item_id} in {catalog_images_collection}")
+        image_link = document["image_s3_url"]
+        return image_link
 
     async def upsert_data_new(self, primary_key_col: str, collection_name: str, event_type: str, data: List[Dict], bot: str,
                           user: Text):

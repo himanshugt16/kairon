@@ -1,3 +1,4 @@
+import json
 from datetime import datetime
 
 from bson import ObjectId
@@ -10,9 +11,9 @@ from kairon.shared.content_importer.data_objects import ContentValidationLogs
 from kairon.shared.data.constant import EVENT_STATUS
 from kairon.exceptions import AppException
 from kairon.shared.data.data_models import CognitionSchemaRequest
-from kairon.shared.data.data_objects import BotSettings
+from kairon.shared.data.data_objects import BotSettings, BotSyncConfig
 from kairon.shared.data.processor import MongoProcessor
-from kairon.shared.integrations.data_objects import DataIntegrationLogs
+from kairon.shared.integrations.data_objects import CatalogIntegrationLogs
 from kairon.shared.models import CognitionMetadataType
 
 
@@ -23,7 +24,7 @@ class CatalogIntegrationLogProcessor:
 
     @staticmethod
     def add_log(bot: str, user: str, integration: str = None, sync_type: str = None, validation_errors: dict = None,
-                exception: str = None, status: str = None, event_status: str = EVENT_STATUS.INITIATED.value):
+                raw_payload: dict = None, exception: str = None, status: str = None, event_status: str = EVENT_STATUS.INITIATED.value):
         """
         Adds or updates log for content importer event.
         @param bot: bot id.
@@ -37,14 +38,15 @@ class CatalogIntegrationLogProcessor:
         @return:
         """
         try:
-            doc = DataIntegrationLogs.objects(bot=bot).filter(
+            doc = CatalogIntegrationLogs.objects(bot=bot).filter(
                 Q(event_status__ne=EVENT_STATUS.COMPLETED.value) &
                 Q(event_status__ne=EVENT_STATUS.FAIL.value)).get()
         except DoesNotExist:
-            doc = DataIntegrationLogs(
+            doc = CatalogIntegrationLogs(
                 bot=bot,
                 user=user,
                 integration=integration,
+                raw_payload = raw_payload,
                 start_timestamp=datetime.utcnow(),
                 event_id=str(ObjectId())
             )
@@ -71,7 +73,7 @@ class CatalogIntegrationLogProcessor:
         """
         in_progress = False
         try:
-            DataIntegrationLogs.objects(bot=bot).filter(
+            CatalogIntegrationLogs.objects(bot=bot).filter(
                 Q(event_status__ne=EVENT_STATUS.COMPLETED.value) &
                 Q(event_status__ne=EVENT_STATUS.FAIL.value) &
                 Q(event_status__ne=EVENT_STATUS.ABORTED.value)).get()
@@ -94,7 +96,7 @@ class CatalogIntegrationLogProcessor:
     #     today = datetime.today()
     #
     #     today_start = today.replace(hour=0, minute=0, second=0)
-    #     doc_count = DataIntegrationLogs.objects(
+    #     doc_count = CatalogIntegrationLogs.objects(
     #         bot=bot, start_timestamp__gte=today_start
     #     ).count()
     #     if doc_count >= BotSettings.objects(bot=bot).get().content_importer_limit_per_day:
@@ -114,7 +116,7 @@ class CatalogIntegrationLogProcessor:
         @param page_size: page size
         @return: list of logs.
         """
-        for log in DataIntegrationLogs.objects(bot=bot).order_by("-start_timestamp").skip(start_idx).limit(page_size):
+        for log in CatalogIntegrationLogs.objects(bot=bot).order_by("-start_timestamp").skip(start_idx).limit(page_size):
             log = log.to_mongo().to_dict()
             log.pop('_id')
             log.pop('bot')
@@ -144,7 +146,7 @@ class CatalogIntegrationLogProcessor:
         """
         Deletes latest log if it is present in enqueued state.
         """
-        latest_log = DataIntegrationLogs.objects(bot=bot).order_by('-id').first()
+        latest_log = CatalogIntegrationLogs.objects(bot=bot).order_by('-id').first()
         if latest_log and latest_log.event_status == EVENT_STATUS.ENQUEUED.value:
             latest_log.delete()
 
@@ -270,35 +272,73 @@ class CatalogIntegrationLogProcessor:
             if "itemid" not in item:
                 raise AppException(f"Missing 'itemid' in item: {item}")
 
+    import json
 
     @staticmethod
-    def validate_item_fields(json_data, event_type):
+    def validate_item_fields(json_data, event_type, metadata_path):
         """
-        Validates that each item has the required fields.
+        Validates that each item has the required source fields as defined in the metadata file.
         Ensures 'item_categoryid' is within valid categories.
-        Only runs if event_type is 'field_update'.
+        Only runs if event_type is 'push_menu'.
         """
+
         if event_type != "push_menu":
             return
 
+        with open(metadata_path, "r") as file:
+            metadata = json.load(file)
+
         valid_category_ids = {cat["categoryid"] for cat in json_data.get("categories", [])}
-        required_fields = ["itemname", "itemdescription", "price", "item_categoryid", "in_stock", "item_image_url"]
+
+        required_fields = set()
+        for system_fields in metadata.values():
+            for config in system_fields.values():
+                source_field = config.get("source")
+                if source_field:
+                    required_fields.add(source_field)
 
         for item in json_data.get("items", []):
             missing_fields = [field for field in required_fields if field not in item]
             if missing_fields:
                 raise AppException(f"Missing fields {missing_fields} in item: {item}")
 
-            if item["item_categoryid"] not in valid_category_ids:
+            if "item_categoryid" in item and item["item_categoryid"] not in valid_category_ids:
                 raise AppException(f"Invalid 'item_categoryid' {item['item_categoryid']} in item: {item}")
 
+    # @staticmethod
+    # def is_catalog_sync_allowed(bot: str):
+    #     """
+    #     Checks if catalog sync is allowed for the given bot.
+    #     """
+    #     bot_settings = BotSettings.objects(bot=bot).only("allow_catalog_sync").first()
+    #     if not bot_settings or not bot_settings.allow_catalog_sync:
+    #         raise AppException("Catalog Sync is not allowed! Contact support")
+    #     else:
+    #         return bot_settings.allow_catalog_sync
+
     @staticmethod
-    def is_catalog_sync_allowed(bot: str):
-        """
-        Checks if catalog sync is allowed for the given bot.
-        """
-        bot_settings = BotSettings.objects(bot=bot).only("allow_catalog_sync").first()
-        if not bot_settings or not bot_settings.allow_catalog_sync:
-            raise AppException("Catalog Sync is not allowed! Contact support")
-        else:
-            return bot_settings.allow_catalog_sync
+    def is_event_type_allowed(bot: str, event_type: str):
+        config = BotSyncConfig.objects(branch_bot=bot).first()
+        if not config:
+            raise AppException("No bot sync config found for bot")
+
+        if event_type == "push_menu" and not config.process_push_menu:
+            raise AppException("Push menu processing is disabled for this bot.")
+
+        if event_type == "field_update" and not config.process_item_toggle:
+            raise AppException("Field update processing is disabled for this bot.")
+
+
+    @staticmethod
+    def is_ai_enabled(bot: str):
+        config = BotSyncConfig.objects(branch_bot=bot).first()
+        if not config:
+            raise AppException("No bot sync config found for bot")
+        return config.ai_enabled
+
+    @staticmethod
+    def is_meta_enabled(bot: str):
+        config = BotSyncConfig.objects(branch_bot=bot).first()
+        if not config:
+            raise AppException("No bot sync config found for bot")
+        return config.meta_enabled

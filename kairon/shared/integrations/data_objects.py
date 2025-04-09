@@ -5,8 +5,9 @@ from kairon.shared.data.signals import push_notification
 
 
 @push_notification.apply
-class DataIntegrationLogs(DynamicDocument):
-    event_id = StringField(required=True, unique=True)
+class CatalogIntegrationLogs(DynamicDocument):
+    execution_id = StringField(required=True, unique=True)
+    raw_payload = DictField(required=True)
     validation_errors = DictField(default={})
     exception = StringField(default="")
     bot = StringField(required=True)
@@ -19,3 +20,5 @@ class DataIntegrationLogs(DynamicDocument):
     event_status = StringField(default="COMPLETED")
 
     meta = {"indexes": [{"fields": ["bot", "event_id", ("bot", "event_status", "-start_timestamp")]}]}
+
+

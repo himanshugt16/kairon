@@ -9,7 +9,7 @@ from kairon.shared.auth import Authentication
 from kairon.shared.cognition.processor import CognitionDataProcessor
 from kairon.shared.constants import DataIntegrationTypes
 from kairon.shared.constants import DESIGNER_ACCESS
-from kairon.shared.data.data_models import DataIntegrationRequest
+from kairon.shared.integrations.integration_log_processor import CatalogIntegrationLogProcessor
 from kairon.shared.models import User
 
 router = APIRouter()
@@ -28,12 +28,9 @@ async def sync_data(
     """
     Handles incoming data from integrations (e.g., Petpooja) for processing, validation, and eventual storage.
     """
+    CatalogIntegrationLogProcessor.is_event_type_allowed(bot, event_type)
+
     request_body = await request.json()
-    # body2 = await request.body()
-    # print(body2)
-    # items = body["restaurants"]
-    # print(items)
-    # return {"message": body}
 
     event = CatalogIntegrationEvent(
         bot=bot,
