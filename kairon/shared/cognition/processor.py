@@ -15,7 +15,7 @@ from kairon.shared.data.constant import DEFAULT_LLM
 from kairon.shared.data.data_objects import Integrations, BotSyncConfig
 from kairon.shared.data.processor import MongoProcessor
 from kairon.shared.data.utils import DataUtility
-from kairon.shared.models import CognitionDataType, CognitionMetadataType, VaultSyncEventType
+from kairon.shared.models import CognitionDataType, CognitionMetadataType, VaultSyncType
 from tqdm import tqdm
 import uuid
 
@@ -470,22 +470,22 @@ class CognitionDataProcessor:
         else:
             raise ValueError(f"Unsupported data type: {data_type}")
 
-    def validate_data(self, primary_key_col: str, collection_name: str, event_type: str, data: List[Dict], bot: str) -> Dict:
+    def validate_data(self, primary_key_col: str, collection_name: str, sync_type: str, data: List[Dict], bot: str) -> Dict:
         """
         Validates each dictionary in the data list according to the expected schema from column_dict.
 
         Args:
             data: List of dictionaries where each dictionary represents a row to be validated.
             collection_name: The name of the collection (table name).
-            event_type: The type of the event being validated.
+            sync_type: The type of the event being validated.
             bot: The bot identifier.
             primary_key_col: The primary key column for identifying rows.
 
         Returns:
             Dict: Summary of validation errors, if any.
         """
-        self._validate_event_type(event_type)
-        event_validations = VaultSyncEventType[event_type].value
+        self._validate_sync_type(sync_type)
+        event_validations = VaultSyncType[sync_type].value
 
         self._validate_collection_exists(collection_name)
         column_dict = MongoProcessor().get_column_datatype_dict(bot, collection_name)
@@ -516,7 +516,7 @@ class CognitionDataProcessor:
 
             if "invalid_columns" in event_validations:
                 expected_columns = list(column_dict.keys())
-                if event_type == "field_update":
+                if sync_type == VaultSyncType:
                     expected_columns = [primary_key_col + " + any from " + str([col for col in column_dict.keys() if col != primary_key_col])]
                 if not set(row.keys()).issubset(set(column_dict.keys())):
                     row_errors.append({
@@ -562,7 +562,7 @@ class CognitionDataProcessor:
 
         return error_summary
 
-    async def upsert_data(self, primary_key_col: str, collection_name: str, event_type: str, data: List[Dict], bot: str, user: Text):
+    async def upsert_data(self, primary_key_col: str, collection_name: str, sync_type: str, data: List[Dict], bot: str, user: Text):
         """
         Upserts data into the CognitionData collection.
         If document with the primary key exists, it will be updated.
@@ -571,7 +571,7 @@ class CognitionDataProcessor:
         Args:
             primary_key_col: The primary key column name to check for uniqueness.
             collection_name: The collection name (table).
-            event_type: The type of the event being upserted
+            sync_type: The type of the event being upserted
             data: List of rows of data to upsert.
             bot: The bot identifier associated with the data.
             user: The user
@@ -596,7 +596,7 @@ class CognitionDataProcessor:
 
             existing_document = existing_document_map.get(primary_key_value)
 
-            if event_type == "field_update" and existing_document:
+            if sync_type == "item_toggle" and existing_document:
                 existing_data = existing_document.get("data", {})
                 merged_data = {**existing_data, **row}
                 logger.debug(f"Merged row for {primary_key_col} {primary_key_value}: {merged_data}")
@@ -654,33 +654,33 @@ class CognitionDataProcessor:
         except Exception as e:
             raise AppException(f"Failed to sync document with Qdrant: {str(e)}")
 
-    def _validate_event_type(self, event_type: str):
-        if event_type not in VaultSyncEventType.__members__.keys():
-            raise AppException("Event type does not exist")
+    def _validate_sync_type(self, sync_type: str):
+        if sync_type not in VaultSyncType.__members__.keys():
+            raise AppException("Sync type does not exist")
 
     def _validate_collection_exists(self, collection_name: str):
         if not CognitionSchema.objects(collection_name=collection_name).first():
             raise AppException(f"Collection '{collection_name}' does not exist.")
 
     @staticmethod
-    def save_data_integration_config(configuration: Dict, bot: Text, user: Text, event_type: Text = None):
+    def save_data_integration_config(configuration: Dict, bot: Text, user: Text, sync_type: Text = None):
         """
         save or updates data integration configuration
         :param configuration: config dict
         :param bot: bot id
         :param user: user id
-        :param event_type: event type
+        :param sync_type: event type
         :return: None
         """
         try:
-            integration = Integrations.objects(bot= bot, connector_type = configuration['connector_type'], event_type = event_type).get()
+            integration = Integrations.objects(bot= bot, connector_type = configuration['connector_type'], sync_type = sync_type).get()
             integration.config = configuration['config']
             integration.meta_config = configuration['meta_config']
         except DoesNotExist:
             integration = Integrations(**configuration)
         integration.bot = bot
         integration.user = user
-        integration.event_type = event_type
+        integration.sync_type = sync_type
         integration.timestamp = datetime.utcnow()
 
         if 'meta_config' in configuration:
@@ -724,7 +724,7 @@ class CognitionDataProcessor:
     #     return data
 
     @staticmethod
-    def preprocess_menu_data(bot, json_data, event_type, metadata_path):
+    def preprocess_push_menu_data(bot, json_data, metadata_path):
         """
         Preprocess the JSON data received from Petpooja to extract relevant fields for knowledge base or meta synchronization.
         Handles different event types ("push_menu" vs others) and uses metadata to drive the field extraction and defaulting.
@@ -737,67 +737,49 @@ class CognitionDataProcessor:
             for cat in json_data.get("categories", [])
         }
 
-        data = []
+        data = {sync_target: [] for sync_target in metadata}
         for item in json_data.get("items", []):
-            transformed_item = {
-                "id": item["itemid"]
-            }
-
             for sync_target, fields in metadata.items():
-                transformed_item[sync_target] = {}
+                transformed_item = {"id": item["itemid"]}
 
                 for target_field, field_config in fields.items():
                     source_key = field_config.get("source")
                     default_value = field_config.get("default")
+                    value = item.get(source_key) if source_key else None
 
-                    if event_type == "push_menu":
-                        value = item.get(source_key) if source_key else None
+                    if target_field == "availability":
+                        value = "in stock" if int(value or 0) > 0 else default_value
+                    elif target_field == "facebook_product_category":
+                        category_id = value or ""
+                        value = f"Food and drink > {category_map.get(category_id, 'General')}"
+                    elif target_field == "image_link":
+                        value = CognitionDataProcessor.resolve_image_link(bot, item["itemid"])
+                    elif target_field == "price":
+                        value = float(value)
+                    if not value:
+                        value = default_value
 
-                        if target_field == "availability":
-                            value = "in stock" if int(value or 0) > 0 else default_value
-                        elif target_field == "facebook_product_category":
-                            category_id = value or ""
-                            value = f"Food and drink > {category_map.get(category_id, 'General')}"
-                        elif target_field == "image_link":
-                            value = CognitionDataProcessor.resolve_image_link(bot, item["itemid"])
-                        if not value:
-                            value = default_value
-                        transformed_item[sync_target][target_field] = value
+                    transformed_item[target_field] = value
 
-                    else:
-                        if source_key and source_key in item:
-                            value = item.get(source_key)
-
-                            if target_field == "availability":
-                                value = "in stock" if int(value or 0) > 0 else default_value
-                            elif target_field == "facebook_product_category":
-                                category_id = value
-                                value = f"Food and drink > {category_map.get(category_id, 'General')}"
-                            elif target_field == "image_link":
-                                value = CognitionDataProcessor.resolve_image_link(bot, item["itemid"])
-                            transformed_item[sync_target][target_field] = value
-
-            data.append(transformed_item)
+                data[sync_target].append(transformed_item)
 
         return data
 
     @staticmethod
-    def preprocess_field_update_request(json_data, event_type):
-        if event_type == "push_menu":
-            return json_data
+    def preprocess_item_toggle_data(json_data, metadata_path):
+        with open(metadata_path, "r") as f:
+            metadata = json.load(f)
 
-        in_stock_str = "No" if not json_data["inStock"] else "Yes"
 
-        result = {"items": []}
+        in_stock = json_data["body"]["inStock"]
+        item_ids = json_data["body"]["itemID"]
+        availability = "in stock" if in_stock else "out of stock"
+        processed_data = [{"id": item_id, "availability": availability} for item_id in item_ids]
 
-        for item_id in json_data["itemID"]:
-            doc = CollectionData.objects(data__itemid=item_id).first()
-            if doc:
-                item_data = doc.data.copy()
-                item_data["in_stock"] = in_stock_str
-                result["items"].append(item_data)
+        data = {sync_target: processed_data for sync_target in metadata}
 
-        return result
+        return data
+
 
     @staticmethod
     def resolve_image_link(bot: str, item_id: str):
@@ -811,7 +793,7 @@ class CognitionDataProcessor:
             raise AppException("No bot sync config found while image resolving")
 
         default_logo_s3_config = config.default_logo_s3 or {}
-        is_enabled = default_logo_s3_config.get("isenabled", False)
+        is_enabled = default_logo_s3_config.get("is_enabled", False)
 
         if is_enabled:
             image_link = default_logo_s3_config.get("image_s3_url")
@@ -824,11 +806,11 @@ class CognitionDataProcessor:
         catalog_images_collection = f"{customer}_{branch}_catalog_images"
         document = CollectionData.objects(collection_name = catalog_images_collection, data__itemid=item_id)
         if not document or not document.get("image_s3_url"):
-            AppException(f"Cannot resolbe image for {item_id} in {catalog_images_collection}")
+            AppException(f"Cannot resolve image for {item_id} in {catalog_images_collection}")
         image_link = document["image_s3_url"]
         return image_link
 
-    async def upsert_data_new(self, primary_key_col: str, collection_name: str, event_type: str, data: List[Dict], bot: str,
+    async def upsert_data_new(self, primary_key_col: str, collection_name: str, sync_type: str, data: List[Dict], bot: str,
                           user: Text):
         """
         Upserts data into the CognitionData collection in batches and syncs embeddings with Qdrant.
@@ -836,7 +818,7 @@ class CognitionDataProcessor:
         Args:
             primary_key_col: The primary key column name to check for uniqueness.
             collection_name: The collection name (table).
-            event_type: The type of the event being upserted.
+            sync_type: The type of the event being upserted.
             data: List of rows of data to upsert.
             bot: The bot identifier associated with the data.
             user: The user.
@@ -928,7 +910,7 @@ class CognitionDataProcessor:
             vector_ids.clear()
 
         remaining_primary_keys =[]
-        if event_type == "push_menu":
+        if sync_type == "push_menu":
             stale_docs = [doc for key, doc in existing_document_map.items() if key not in processed_keys]
 
             if stale_docs:
@@ -949,3 +931,27 @@ class CognitionDataProcessor:
 
         return {"message": "Upsert complete!", "stale_ids": remaining_primary_keys}
         # return {"message": "Upsert complete!"}
+
+    @staticmethod
+    def save_kv_data(processed_data: dict, bot: str, user: str):
+        """
+        Save each item in `kv` of the processed payload into CollectionData individually.
+        """
+        config = BotSyncConfig.objects(branch_bot=bot).first()
+        if not config:
+            raise AppException(f"No bot sync config found for bot: {bot}")
+
+        customer = config.customer.replace(" ", "_")
+        branch = config.branch_name.replace(" ", "_")
+        catalog_data_collection = f"{customer}_{branch}_catalog_data"
+        kv_items = processed_data.get("kv", [])
+        for item in kv_items:
+            collection_data = CollectionData(
+                collection_name=catalog_data_collection,
+                data=item,
+                user=user,
+                bot=bot,
+                timestamp=datetime.utcnow(),
+                status=True
+            )
+            collection_data.save()

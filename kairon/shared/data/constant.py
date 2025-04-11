@@ -110,6 +110,19 @@ class EVENT_STATUS(str, Enum):
     ABORTED = "Aborted"
 
 
+class SYNC_STATUS(str, Enum):
+    INITIATED = "Initiated"
+    VALIDATING_REQUEST = "Request validation in progress"
+    VALIDATING_KV = "Knowledge vault processed data in progress"
+    PREPROCESSING = "Preprocessing in progress"
+    PREPROCESSING_COMPLETED = "Preprocessing Completed"
+    SAVE = "Importing data to kairon"
+    SAVE_META = "Importing data to Meta"
+    ENQUEUED = "Enqueued"
+    COMPLETED = "Completed"
+    FAILED = "Failed"
+    ABORTED = "Aborted"
+
 class ONBOARDING_STATUS(str, Enum):
     NOT_COMPLETED = "Not Completed"
     SKIPPED = "Skipped"
@@ -264,3 +277,7 @@ ORG_SETTINGS_MESSAGES = {
     "create_user": "User creation is blocked by your OrgAdmin from SSO",
     "only_sso_login": "Login with your org SSO url, Login with username/password not allowed",
 }
+
+class SyncType(str, Enum):
+    push_menu = "push_menu"
+    item_toggle = "item_toggle"

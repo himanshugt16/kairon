@@ -13,7 +13,7 @@ from kairon.shared.auth import Authentication
 from kairon.shared.cognition.data_objects import CognitionSchema
 from kairon.shared.cognition.processor import CognitionDataProcessor
 from kairon.shared.concurrency.actors.factory import ActorFactory
-from kairon.shared.constants import ActorType, DataIntegrationTypes
+from kairon.shared.constants import ActorType
 from kairon.shared.constants import DESIGNER_ACCESS
 from kairon.shared.data.data_models import DataIntegrationRequest
 from kairon.shared.data.processor import MongoProcessor
@@ -332,7 +332,7 @@ async def download_error_csv(
 async def knowledge_vault_sync(
     primary_key_col: str,
     collection_name: str,
-    event_type: str,
+    sync_type: str,
     data: List[dict],
     current_user: User = Security(Authentication.get_current_user_and_bot, scopes=DESIGNER_ACCESS),
 ):
@@ -341,7 +341,7 @@ async def knowledge_vault_sync(
     """
     data = [{key.lower(): value for key, value in row.items()} for row in data]
 
-    error_summary = cognition_processor.validate_data(primary_key_col.lower(), collection_name.lower(), event_type.lower(), data, current_user.get_bot())
+    error_summary = cognition_processor.validate_data(primary_key_col.lower(), collection_name.lower(), sync_type.lower(), data, current_user.get_bot())
 
     if error_summary:
         return Response(
@@ -351,7 +351,7 @@ async def knowledge_vault_sync(
             error_code=400
         )
 
-    await cognition_processor.upsert_data_new(primary_key_col.lower(), collection_name.lower(), event_type.lower(), data,
+    await cognition_processor.upsert_data_new(primary_key_col.lower(), collection_name.lower(), sync_type.lower(), data,
                                     current_user.get_bot(), current_user.get_user())
 
     return Response(

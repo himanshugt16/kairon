@@ -17,41 +17,29 @@ class MetaProcessor:
         self.headers = {}
         self.processed_data = []
 
-    def preprocess_data(self, data: list, method: Text):
+    def preprocess_data(self, data: List[dict], method: Text, metadata_path: str):
+        # Load metadata and use the keys as fields to extract
+        with open(metadata_path, "r") as meta_file:
+            metadata = json.load(meta_file)
+
+        meta_fields = list(metadata["meta"].keys())
+
         for item in data:
             transformed_item = {"retailer_id": item["id"]}
 
             if method == "UPDATE":
                 transformed_item["data"] = {}
-                if "title" in item:
-                    transformed_item["data"]["name"] = item["title"]
-                if "description" in item:
-                    transformed_item["data"]["description"] = item["description"]
-                if "availability" in item:
-                    transformed_item["data"]["availability"] = item["availability"]
-                if "condition" in item:
-                    transformed_item["data"]["condition"] = item["condition"]
-                if "link" in item:
-                    transformed_item["data"]["url"] = item["link"]
-                if "image_link" in item:
-                    transformed_item["data"]["image_url"] = item["image_link"]
-                if "price" in item:
-                    transformed_item["data"]["price"] = int(item["price"])
-                if "brand" in item:
-                    transformed_item["data"]["brand"] = item["brand"]
+                for field in meta_fields:
+                    if field in item:
+                        value = int(item[field]) if field == "price" else item[field]
+                        transformed_item["data"][field] = value
 
             else:
-                transformed_item["data"] = {
-                    "name": item["title"],
-                    "currency": "INR",
-                    "description": item["description"],
-                    "availability": item["availability"],
-                    "condition": item["condition"],
-                    "url": item["link"],
-                    "image_url": item["image_link"],
-                    "price": int(item["price"]),
-                    "brand": item["brand"],
-                }
+                transformed_item["data"] = {"currency": "INR"}
+                for field in meta_fields:
+                    if field in item:
+                        value = int(item[field]) if field == "price" else item[field]
+                        transformed_item["data"][field] = value
 
             transformed_item["method"] = method
             transformed_item["item_type"] = "PRODUCT_ITEM"

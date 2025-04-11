@@ -117,7 +117,7 @@ class CognitionMetadataType(str, Enum):
     int = "int"
     float = "float"
 
-class VaultSyncEventType(str, Enum):
+class VaultSyncType(str, Enum):
     push_menu = ["column_length_mismatch", "invalid_columns", "pydantic_validation"]
-    field_update = ["invalid_columns", "document_non_existence", "pydantic_validation"]
+    item_toggle = ["invalid_columns", "document_non_existence", "pydantic_validation"]
 

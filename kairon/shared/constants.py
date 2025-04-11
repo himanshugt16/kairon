@@ -84,6 +84,9 @@ class EventClass(str, Enum):
     mail_channel_read_mails = "email_channel_read_mails"
     catalog_integration = "catalog_integration"
 
+class CatalogSyncClass(str, Enum):
+    petpooja_sync = "petpooja_sync"
+
 
 class EventRequestType(str, Enum):
     trigger_async = "trigger_async"
@@ -120,7 +123,7 @@ class ChannelTypes(str, Enum):
     LINE = "line"
     MAIL = "mail"
 
-class DataIntegrationTypes(str, Enum):
+class CatalogProvider(str, Enum):
     PETPOOJA = "petpooja"
 
 class ElementTypes(str, Enum):

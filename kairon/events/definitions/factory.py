@@ -1,6 +1,6 @@
 from kairon.events.definitions.content_importer import DocContentImporterEvent
 from kairon.events.definitions.data_importer import TrainingDataImporterEvent
-from kairon.events.definitions.data_integration import CatalogIntegrationEvent
+from kairon.events.definitions.petpooja_sync import PetpoojaSync
 from kairon.events.definitions.faq_importer import FaqDataImporterEvent
 from kairon.events.definitions.history_delete import DeleteHistoryEvent
 from kairon.events.definitions.mail_channel import MailReadEvent
@@ -24,7 +24,7 @@ class EventFactory:
         EventClass.message_broadcast: MessageBroadcastEvent,
         EventClass.content_importer: DocContentImporterEvent,
         EventClass.mail_channel_read_mails: MailReadEvent,
-        EventClass.catalog_integration: CatalogIntegrationEvent
+        EventClass.catalog_integration: PetpoojaSync
     }
 
     @staticmethod
