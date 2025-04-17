@@ -13,6 +13,7 @@ from kairon.shared.constants import EventClass
 from kairon.shared.data.constant import SyncType, SYNC_STATUS
 from kairon.shared.data.data_objects import Integrations
 from kairon.shared.catalog_sync.catalog_sync_log_processor import CatalogSyncLogProcessor
+from kairon.shared.utils import MailUtility
 
 
 class PetpoojaSync(CatalogSyncBase):
@@ -32,67 +33,63 @@ class PetpoojaSync(CatalogSyncBase):
         self.sync_type = kwargs.get("sync_type", SyncType.item_toggle)
         self.data = []
 
-    def validate(self, **kwargs):
+    async def validate(self, **kwargs):
         """
         Validates if an event is already running for that particular bot and
         checks if the event trigger limit has been exceeded.
         Then, preprocesses the received request
         """
+        try:
+            request = kwargs.get("request_body")
+            CatalogSyncLogProcessor.is_sync_type_allowed(self.bot, self.sync_type)
+            CatalogSyncLogProcessor.is_sync_in_progress(self.bot)
+            # CatalogSyncLogProcessor.is_limit_exceeded(self.bot)
+            CatalogSyncLogProcessor.add_log(self.bot, self.user, self.provider, self.sync_type,
+                                                   sync_status=SYNC_STATUS.INITIATED.value, raw_payload=request)
+            if CatalogSyncLogProcessor.is_catalog_collection_exists(self.bot) is False:
+                CatalogSyncLogProcessor.create_catalog_collection(bot=self.bot, user=self.user, data=self.data)
+            CatalogSyncLogProcessor.add_log(self.bot, self.user, sync_status=SYNC_STATUS.VALIDATING_REQUEST)
+            if self.sync_type == SyncType.push_menu:
+                CatalogSyncLogProcessor.validate_item_ids(request)
+                CatalogSyncLogProcessor.validate_item_fields(self.bot, request, self.provider)
+                CatalogSyncLogProcessor.validate_image_configurations(self.bot, request)
+            else:
+                CatalogSyncLogProcessor.validate_item_toggle_request(request)
+            return True
+        except Exception as e:
+            await MailUtility.format_and_send_mail(
+                    mail_type="catalog_sync_status", email="himanshu.gupta@nimblework.com", first_name="HG", current_status = e
+                )
 
-        request = kwargs.get("request_body")
-        CatalogSyncLogProcessor.is_sync_in_progress(self.bot)
-        # CatalogSyncLogProcessor.is_limit_exceeded(self.bot)
-        CatalogSyncLogProcessor.add_log(self.bot, self.user, self.provider, self.sync_type,
-                                               sync_status=SYNC_STATUS.INITIATED.value, raw_payload=request)
-        if CatalogSyncLogProcessor.is_catalog_collection_exists(self.bot) is False:
-            CatalogSyncLogProcessor.create_catalog_collection(bot=self.bot, user=self.user, data=self.data)
-        CatalogSyncLogProcessor.add_log(self.bot, self.user, sync_status=SYNC_STATUS.VALIDATING_REQUEST)
-        if self.sync_type == SyncType.push_menu:
-            CatalogSyncLogProcessor.validate_item_ids(request)
-            CatalogSyncLogProcessor.validate_item_fields(request, "metadata/catalog_metadata.yml")
-            CatalogSyncLogProcessor.validate_image_configurations(self.bot, request)
-        else:
-            CatalogSyncLogProcessor.validate_item_toggle_request(request)
-        return self.preprocess(request_body = request)
-
-    def preprocess(self, **kwargs):
+    async def preprocess(self, **kwargs):
         """
         Transform and preprocess incoming payload data into `self.data`
         for catalog sync and meta sync.
         """
-        CatalogSyncLogProcessor.add_log(self.bot, self.user, sync_status=SYNC_STATUS.PREPROCESSING)
-        request = kwargs.get("request_body")
-        if self.sync_type == SyncType.push_menu:
-            self.data = CognitionDataProcessor.preprocess_push_menu_data(self.bot, request, "metadata/catalog_metadata.yml")
-        else:
-            self.data = CognitionDataProcessor.preprocess_item_toggle_data(request, "metadata/catalog_metadata.yml")
-        CatalogSyncLogProcessor.add_log(self.bot, self.user, sync_status=SYNC_STATUS.PREPROCESSING_COMPLETED, processed_payload= self.data)
-        CognitionDataProcessor.save_kv_data(self.data, self.bot, self.user)
-        return True
-
-    def enqueue(self, **kwargs):
-        """
-        Send event to event server
-        """
         try:
-            if not CatalogSyncLogProcessor.is_ai_enabled(self.bot):
-                CatalogSyncLogProcessor.add_log(self.bot, self.user,
-                                                   exception="Sync to knowledge vault is not allowed for this bot. Contact Support!!",
-                                                   sync_status=SYNC_STATUS.COMPLETED.value, status= "Success")
-                raise AppException("Sync to knowledge vault is not allowed in this bot. Contact Support!!")
-            payload = {
-                'bot': self.bot,
-                'user': self.user,
-                'provider': self.provider,
-                'sync_type': self.sync_type,
-                'token': self.token,
-                'data': self.data
-            }
-            CatalogSyncLogProcessor.add_log(self.bot, self.user, self.provider, self.sync_type, sync_status=SYNC_STATUS.ENQUEUED.value)
-            Utility.request_event_server(EventClass.catalog_integration, payload)
+            cognition_processor = CognitionDataProcessor()
+            CatalogSyncLogProcessor.add_log(self.bot, self.user, sync_status=SYNC_STATUS.PREPROCESSING)
+            request = kwargs.get("request_body")
+            if self.sync_type == SyncType.push_menu:
+                self.data = cognition_processor.preprocess_push_menu_data(self.bot, request, self.provider)
+            else:
+                self.data = cognition_processor.preprocess_item_toggle_data(self.bot, request, self.provider)
+            CatalogSyncLogProcessor.add_log(self.bot, self.user, sync_status=SYNC_STATUS.PREPROCESSING_COMPLETED, processed_payload= self.data)
+            stale_primary_keys = CognitionDataProcessor.save_kv_data(self.data, self.bot, self.user)
+            CatalogSyncLogProcessor.add_log(self.bot, self.user, sync_status=SYNC_STATUS.VALIDATING_KV)
+            error_summary = cognition_processor.validate_data("id", "catalog",
+                                                              self.sync_type.lower(), self.data.get("kv", []), self.bot)
+            initiate_import = True
+            if error_summary:
+                initiate_import = False
+                CatalogSyncLogProcessor.add_log(self.bot, self.user, validation_errors=error_summary,
+                                                sync_status=SYNC_STATUS.SAVE.value, status="Failure")
+            return initiate_import, stale_primary_keys
         except Exception as e:
-            CatalogSyncLogProcessor.delete_enqueued_event_log(self.bot)
-            raise e
+            await MailUtility.format_and_send_mail(
+                mail_type="catalog_sync_status", email="himanshu.gupta@nimblework.com", first_name="HG", current_status=e
+            )
+
 
     async def execute(self, **kwargs):
         """
@@ -100,46 +97,54 @@ class PetpoojaSync(CatalogSyncBase):
         """
         self.data = kwargs.get("data", {})
         cognition_processor = CognitionDataProcessor()
+        initiate_import = kwargs.get("initiate_import", False)
+        stale_primary_keys = kwargs.get("stale_primary_keys")
+        status = "Failure"
         try:
             knowledge_vault_data = self.data.get("kv", [])
-            CatalogSyncLogProcessor.add_log(self.bot, self.user, sync_status=SYNC_STATUS.VALIDATING_KV)
-            error_summary = cognition_processor.validate_data("id", "catalog",
-                                                              self.sync_type.lower(), knowledge_vault_data, self.bot)
-            initiate_import = True
-            status = "Success"
-            if error_summary:
-                initiate_import = False
-                status = "Failure"
-            CatalogSyncLogProcessor.add_log(self.bot, self.user, validation_errors=error_summary,
-                                                sync_status=SYNC_STATUS.SAVE.value)
-            if initiate_import:
+
+            if initiate_import and CatalogSyncLogProcessor.is_ai_enabled(self.bot):
                 result = await cognition_processor.upsert_data_new("id", f"catalog",
-                                                      self.sync_type.lower(), knowledge_vault_data, self.bot, self.user)
-                remaining_primary_keys = result.get("stale_ids", [])
-                integrations_doc = Integrations.objects(bot = self.bot, connector_type = self.provider, sync_type = self.sync_type).first()
-                if not CatalogSyncLogProcessor.is_meta_enabled(self.bot):
-                    CatalogSyncLogProcessor.add_log(self.bot, self.user,
-                                                    exception="Sync to Meta is not allowed for this bot. Contact Support!!",
-                                                    sync_status=SYNC_STATUS.COMPLETED.value, status="Success")
-                    raise AppException("Sync to Meta is not allowed for this bot. Contact Support!!")
-                if integrations_doc and 'meta_config' in integrations_doc:
-                    CatalogSyncLogProcessor.add_log(self.bot, self.user,sync_status=SYNC_STATUS.SAVE_META.value)
-                    meta_processor = MetaProcessor(integrations_doc.meta_config.get('access_token'), integrations_doc.meta_config.get('catalog_id'))
-                    meta_payload = self.data.get("meta", [])
-                    if self.sync_type == SyncType.push_menu:
-                        processed_data = meta_processor.preprocess_data(meta_payload, "CREATE", "metadata/catalog_metadata.yml")
+                                                                   self.sync_type.lower(), knowledge_vault_data,
+                                                                   self.bot, self.user)
+                stale_primary_keys = result.get("stale_ids", [])
+            else:
+                CatalogSyncLogProcessor.add_log(self.bot, self.user,
+                                                exception="Sync to knowledge vault is not allowed for this bot. Contact Support!!",
+                                                sync_status=SYNC_STATUS.COMPLETED.value, status="Success")
 
-                        await meta_processor.push_meta_catalog(processed_data) # Update items of push menu will be handled in CREATE itself
+            integrations_doc = Integrations.objects(bot=self.bot, provider=self.provider,
+                                                    sync_type=self.sync_type).first()
+            if not CatalogSyncLogProcessor.is_meta_enabled(self.bot):
+                CatalogSyncLogProcessor.add_log(self.bot, self.user,
+                                                exception="Sync to Meta is not allowed for this bot. Contact Support!!",
+                                                sync_status=SYNC_STATUS.COMPLETED.value, status="Success")
+                raise AppException("Sync to Meta is not allowed for this bot. Contact Support!!")
 
-                        if remaining_primary_keys:
-                            delete_payload = meta_processor.preprocess_delete_data(remaining_primary_keys)
-                            await meta_processor.delete_meta_catalog(delete_payload)
-                    else:
-                        processed_data = meta_processor.preprocess_data(meta_payload,"UPDATE", "metadata/catalog_metadata.yml")
-                        await meta_processor.update_meta_catalog(processed_data)
+            if integrations_doc and 'meta_config' in integrations_doc:
+                CatalogSyncLogProcessor.add_log(self.bot, self.user, sync_status=SYNC_STATUS.SAVE_META.value)
+                meta_processor = MetaProcessor(integrations_doc.meta_config.get('access_token'),
+                                               integrations_doc.meta_config.get('catalog_id'))
+                meta_payload = self.data.get("meta", [])
+                if self.sync_type == SyncType.push_menu:
+                    meta_processor.preprocess_data(self.bot, meta_payload, "CREATE", self.provider)
+
+                    await meta_processor.push_meta_catalog()  # Update items of push menu will be handled in CREATE itself
+
+                    if stale_primary_keys:
+                        delete_payload = meta_processor.preprocess_delete_data(stale_primary_keys)
+                        await meta_processor.delete_meta_catalog(delete_payload)
+                else:
+                    processed_data = meta_processor.preprocess_data(self.bot, meta_payload, "UPDATE", self.provider)
+                    await meta_processor.update_meta_catalog()
+
             CatalogSyncLogProcessor.add_log(self.bot, self.user, sync_status=SYNC_STATUS.COMPLETED.value, status=status)
         except Exception as e:
             logger.error(str(e))
+            await MailUtility.format_and_send_mail(
+                mail_type="catalog_sync_status", email="himanshu.gupta@nimblework.com", first_name="HG",
+                current_status=e
+            )
             CatalogSyncLogProcessor.add_log(self.bot, self.user,
                                                 exception=str(e),
                                                 status="Failure",

@@ -13,7 +13,7 @@ from kairon.exceptions import AppException
 from kairon.shared.data.data_models import CognitionSchemaRequest
 from kairon.shared.data.data_objects import BotSettings, BotSyncConfig
 from kairon.shared.data.processor import MongoProcessor
-from kairon.shared.catalog_sync.data_objects import CatalogSyncLogs
+from kairon.shared.catalog_sync.data_objects import CatalogSyncLogs, CatalogProviderMapping
 from kairon.shared.models import CognitionMetadataType
 
 
@@ -233,19 +233,25 @@ class CatalogSyncLogProcessor:
             raise AppException("Missing required field: 'itemID'")
 
     @staticmethod
-    def validate_item_fields(json_data, metadata_path):
+    def validate_item_fields(bot, json_data, provider):
         """
         Validates that each item has the required source fields as defined in the metadata file.
         Ensures 'item_categoryid' is within valid categories.
         Only runs if event_type is 'push_menu'.
         """
-        with open(metadata_path, "r") as file:
-            metadata = json.load(file)
+        doc = CatalogProviderMapping.objects(bot=bot, provider=provider).first()
+        if not doc:
+            raise ValueError(f"Metadata mappings not found for bot={bot} and provider={provider}")
+
+        provider_mappings = {
+            "meta": doc.meta_mappings,
+            "kv": doc.kv_mappings
+        }
 
         valid_category_ids = {cat["categoryid"] for cat in json_data.get("categories", [])}
 
         required_fields = set()
-        for system_fields in metadata.values():
+        for system_fields in provider_mappings.values():
             for config in system_fields.values():
                 source_field = config.get("source")
                 if source_field:
@@ -269,7 +275,7 @@ class CatalogSyncLogProcessor:
             raise AppException("Push menu processing is disabled for this bot.")
 
         if sync_type == SyncType.item_toggle and not config.process_item_toggle:
-            raise AppException("Field update processing is disabled for this bot.")
+            raise AppException("Item toggle is disabled for this bot.")
 
 
     @staticmethod
@@ -287,7 +293,7 @@ class CatalogSyncLogProcessor:
         return config.meta_enabled
 
     @staticmethod
-    def validate_image_configurations(bot: str, json_data):
+    def validate_image_configurations(bot: str, user: str):
         """
         Validates image configuration before preprocessing:
 
@@ -298,38 +304,38 @@ class CatalogSyncLogProcessor:
             - Catalog collection `<Customer>_<Branch>_catalog_images` must exist.
             - Each `item_id` must have a document with a valid `image_s3_url`.
         """
-        item_ids = []
-        for item in json_data.get("items", []):
-            item_ids.append(item["itemid"])
 
         config = BotSyncConfig.objects(branch_bot=bot).first()
         if not config:
             raise AppException(f"No bot sync config found for bot: {bot}")
 
-        default_logo_s3_config = config.default_logo_s3 or {}
-        is_enabled = default_logo_s3_config.get("is_enabled", False)
-        image_s3_url = default_logo_s3_config.get("image_s3_url")
+        customer = config.customer.replace(" ", "_")
+        branch = config.branch_name.replace(" ", "_")
+        catalog_images_collection = f"{customer}_{branch}_catalog_images"
 
-        if is_enabled:
-            if not image_s3_url:
-                raise AppException(f"`image_s3_url` must be set when logo_s3 is enabled for bot: {bot}")
-        else:
-            customer = config.customer.replace(" ", "_")
-            branch = config.branch_name.replace(" ", "_")
-            catalog_images_collection = f"{customer}_{branch}_catalog_images"
+        if not CollectionData.objects(collection_name=catalog_images_collection).first():
+            raise AppException(f"Collection `{catalog_images_collection}` does not exist for bot: {bot}")
 
-            # Check at least one document exists in the collection to assume it exists
-            if not CollectionData.objects(collection_name=catalog_images_collection).first():
-                raise AppException(f"Collection `{catalog_images_collection}` does not exist for bot: {bot}")
+        if not CollectionData.objects(collection_name=catalog_images_collection).first():
+            fallback_data = {
+                "itemid": f"{bot}global",
+                "image_url": ""  # You may want to populate this if needed
+            }
+            CollectionData(
+                collection_name=catalog_images_collection,
+                data=fallback_data,
+                user=user,
+                bot=bot,
+                status=True,
+                timestamp=datetime.utcnow()
+            ).save()
 
-            for item_id in item_ids:
-                doc = CollectionData.objects(
-                    collection_name=catalog_images_collection,
-                    data__itemid=item_id
-                ).first()
+        fallback_item_id = f"{bot}_global"
+        document = CollectionData.objects(
+            collection_name=catalog_images_collection,
+            data__itemid=fallback_item_id
+        ).first()
 
-                if not doc:
-                    raise AppException(f"No document found for item_id `{item_id}` in `{catalog_images_collection}`")
-                if not doc.get("image_s3_url"):
-                    raise AppException(
-                        f"`image_s3_url` missing for item_id `{item_id}` in `{catalog_images_collection}`")
+        if not document:
+            raise AppException(
+                f"Fallback image document `{fallback_item_id}` not found in `{catalog_images_collection}`")

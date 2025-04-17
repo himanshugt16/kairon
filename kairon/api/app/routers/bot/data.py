@@ -13,7 +13,7 @@ from kairon.shared.auth import Authentication
 from kairon.shared.cognition.data_objects import CognitionSchema
 from kairon.shared.cognition.processor import CognitionDataProcessor
 from kairon.shared.concurrency.actors.factory import ActorFactory
-from kairon.shared.constants import ActorType
+from kairon.shared.constants import ActorType, CatalogSyncClass
 from kairon.shared.constants import DESIGNER_ACCESS
 from kairon.shared.data.data_models import DataIntegrationRequest
 from kairon.shared.data.processor import MongoProcessor
@@ -365,14 +365,18 @@ async def knowledge_vault_sync(
 @router.post("/integrations/add", response_model=Response)
 async def add_data_integration_config(
     request_data: DataIntegrationRequest,
-    event_type: str,
+    sync_type: str,
     current_user: User = Security(Authentication.get_current_user_and_bot, scopes=DESIGNER_ACCESS),
 ):
     """
     Add data integration config
     """
+
+    if request_data.provider not in CatalogSyncClass.__members__.values():
+        return AppException("Invalid Provider")
+
     integration_endpoint = cognition_processor.save_data_integration_config(
-        request_data.dict(), current_user.get_bot(), current_user.get_user(), event_type
+        request_data.dict(), current_user.get_bot(), current_user.get_user(), sync_type
     )
 
     return Response(message='Integration Complete', data=integration_endpoint)

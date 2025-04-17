@@ -4,6 +4,7 @@ from typing import Text, List
 from urllib.parse import urljoin
 import requests
 from kairon import Utility
+from kairon.shared.catalog_sync.data_objects import CatalogProviderMapping
 from kairon.shared.rest_client import AioRestClient
 from urllib.parse import quote
 
@@ -17,12 +18,12 @@ class MetaProcessor:
         self.headers = {}
         self.processed_data = []
 
-    def preprocess_data(self, data: List[dict], method: Text, metadata_path: str):
-        # Load metadata and use the keys as fields to extract
-        with open(metadata_path, "r") as meta_file:
-            metadata = json.load(meta_file)
+    def preprocess_data(self,bot: Text, data: List[dict], method: Text, provider: str):
+        doc = CatalogProviderMapping.objects(bot=bot, provider=provider).first()
+        if not doc:
+            raise ValueError(f"Metadata mappings not found for bot={bot} and provider={provider}")
 
-        meta_fields = list(metadata["meta"].keys())
+        meta_fields = list(doc.meta_mappings.keys())
 
         for item in data:
             transformed_item = {"retailer_id": item["id"]}
@@ -59,7 +60,7 @@ class MetaProcessor:
         """
         return [{"retailer_id": id, "method": "DELETE"} for id in remaining_ids]
 
-    async def push_meta_catalog(self, processed_data: list):
+    async def push_meta_catalog(self):
         """
         Sync the data to meta when event type is 'push_menu'
         """
@@ -89,7 +90,7 @@ class MetaProcessor:
             print(f"Error syncing push menu data: {e}")
             raise e
 
-    async def update_meta_catalog(self, processed_data: list):
+    async def update_meta_catalog(self):
         """
         Sync the data to meta when event type is 'push_menu'
         """

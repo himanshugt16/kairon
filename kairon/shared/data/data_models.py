@@ -1354,7 +1354,7 @@ class MetaConfig(BaseModel):
     catalog_id: str
 
 class DataIntegrationRequest(BaseModel):
-    connector_type: str
+    provider: str
     config: dict
     meta_config: Optional[MetaConfig]
 

@@ -85,7 +85,7 @@ class EventClass(str, Enum):
     catalog_integration = "catalog_integration"
 
 class CatalogSyncClass(str, Enum):
-    petpooja_sync = "petpooja_sync"
+    petpooja = "petpooja"
 
 
 class EventRequestType(str, Enum):

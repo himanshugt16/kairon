@@ -1,5 +1,6 @@
 import json
 from datetime import datetime
+from pathlib import Path
 from typing import Text, Dict, Any, List
 
 from loguru import logger
@@ -10,6 +11,7 @@ from pymongo import UpdateOne
 from kairon import Utility
 from kairon.exceptions import AppException
 from kairon.shared.actions.data_objects import PromptAction, DatabaseAction
+from kairon.shared.catalog_sync.data_objects import CatalogProviderMapping
 from kairon.shared.cognition.data_objects import CognitionData, CognitionSchema, ColumnMetadata, CollectionData
 from kairon.shared.data.constant import DEFAULT_LLM
 from kairon.shared.data.data_objects import Integrations, BotSyncConfig
@@ -662,8 +664,8 @@ class CognitionDataProcessor:
         if not CognitionSchema.objects(collection_name=collection_name).first():
             raise AppException(f"Collection '{collection_name}' does not exist.")
 
-    @staticmethod
-    def save_data_integration_config(configuration: Dict, bot: Text, user: Text, sync_type: Text = None):
+
+    def save_data_integration_config(self, configuration: Dict, bot: Text, user: Text, sync_type: Text = None):
         """
         save or updates data integration configuration
         :param configuration: config dict
@@ -672,8 +674,9 @@ class CognitionDataProcessor:
         :param sync_type: event type
         :return: None
         """
+        self._validate_sync_type(sync_type)
         try:
-            integration = Integrations.objects(bot= bot, connector_type = configuration['connector_type'], sync_type = sync_type).get()
+            integration = Integrations.objects(bot= bot, provider = configuration['provider'], sync_type = sync_type).get()
             integration.config = configuration['config']
             integration.meta_config = configuration['meta_config']
         except DoesNotExist:
@@ -690,56 +693,30 @@ class CognitionDataProcessor:
         integration_endpoint = DataUtility.get_integration_endpoint(integration)
         return integration_endpoint
 
-    # @staticmethod
-    # def preprocess_menu_data(json_data, event_type):
-    #     """
-    #     Preprocess the JSON data received from Petpooja to extract relevant fields for knowledge base synchronization.
-    #     """
-    #     category_map = {cat["categoryid"]: cat["categoryname"] for cat in json_data.get("categories", [])}
-    #
-    #     default_condition = "new"
-    #     default_origin_country = "IN"
-    #     default_link = "https://www.kairon.com/"
-    #     default_brand = "Sattva"
-    #     default_image_link = "https://www.kairon.com/default-image.jpg"
-    #     default_description = "No description available" # Default image link
-    #
-    #     data = []
-    #     for item in json_data.get("items", []):
-    #         category_name = category_map.get(item.get("item_categoryid"), "General")
-    #         data.append({
-    #             "id": item["itemid"],
-    #             "title": item["itemname"],
-    #             "description": item.get("itemdescription") or default_description,
-    #             "price": float(item.get("price", 0.0)),
-    #             "facebook_product_category": f"Food and drink > {category_name}",
-    #             "availability": "in stock" if int(item.get("in_stock", 0)) > 0 else "out of stock",
-    #             "image_link": item.get("item_image_url") or default_image_link,
-    #             "link": default_link,
-    #             "brand": default_brand,
-    #             "condition": default_condition,
-    #             "origin_country": default_origin_country
-    #         })
-    #
-    #     return data
 
     @staticmethod
-    def preprocess_push_menu_data(bot, json_data, metadata_path):
+    def preprocess_push_menu_data(bot, json_data, provider):
         """
         Preprocess the JSON data received from Petpooja to extract relevant fields for knowledge base or meta synchronization.
         Handles different event types ("push_menu" vs others) and uses metadata to drive the field extraction and defaulting.
         """
-        with open(metadata_path, "r") as f:
-            metadata = json.load(f)
+        doc = CatalogProviderMapping.objects(bot=bot, provider=provider).first()
+        if not doc:
+            raise ValueError(f"Metadata mappings not found for bot={bot} and provider={provider}")
 
         category_map = {
             cat["categoryid"]: cat["categoryname"]
             for cat in json_data.get("categories", [])
         }
 
-        data = {sync_target: [] for sync_target in metadata}
+        provider_mappings = {
+            "meta": doc.meta_mappings,
+            "kv": doc.kv_mappings
+        }
+
+        data = {sync_target: [] for sync_target in provider_mappings}
         for item in json_data.get("items", []):
-            for sync_target, fields in metadata.items():
+            for sync_target, fields in provider_mappings.items():
                 transformed_item = {"id": item["itemid"]}
 
                 for target_field, field_config in fields.items():
@@ -766,17 +743,22 @@ class CognitionDataProcessor:
         return data
 
     @staticmethod
-    def preprocess_item_toggle_data(json_data, metadata_path):
-        with open(metadata_path, "r") as f:
-            metadata = json.load(f)
+    def preprocess_item_toggle_data(bot, json_data, provider):
+        doc = CatalogProviderMapping.objects(bot=bot, provider=provider).first()
+        if not doc:
+            raise ValueError(f"Metadata mappings not found for bot={bot} and provider={provider}")
 
+        provider_mappings = {
+            "meta": doc.meta_mappings,
+            "kv": doc.kv_mappings
+        }
 
         in_stock = json_data["body"]["inStock"]
         item_ids = json_data["body"]["itemID"]
         availability = "in stock" if in_stock else "out of stock"
         processed_data = [{"id": item_id, "availability": availability} for item_id in item_ids]
 
-        data = {sync_target: processed_data for sync_target in metadata}
+        data = {sync_target: processed_data for sync_target in provider_mappings}
 
         return data
 
@@ -792,23 +774,29 @@ class CognitionDataProcessor:
         if not config:
             raise AppException("No bot sync config found while image resolving")
 
-        default_logo_s3_config = config.default_logo_s3 or {}
-        is_enabled = default_logo_s3_config.get("is_enabled", False)
-
-        if is_enabled:
-            image_link = default_logo_s3_config.get("image_s3_url")
-            if image_link:
-                return image_link
-            raise AppException("Cannot resolve image for {item_id} in bot sync config")
-
         customer = config.customer.replace(" ", "_")
         branch = config.branch_name.replace(" ", "_")
         catalog_images_collection = f"{customer}_{branch}_catalog_images"
-        document = CollectionData.objects(collection_name = catalog_images_collection, data__itemid=item_id)
-        if not document or not document.get("image_s3_url"):
-            AppException(f"Cannot resolve image for {item_id} in {catalog_images_collection}")
-        image_link = document["image_s3_url"]
-        return image_link
+
+        document = CollectionData.objects(
+            collection_name=catalog_images_collection,
+            data__itemid=item_id
+        ).first()
+
+        if not document:
+            if not document:
+                fallback_item_id = f"{bot}_global"
+                document = CollectionData.objects(
+                    collection_name=catalog_images_collection,
+                    data__itemid=fallback_item_id
+                ).first()
+
+        data = document.data or {}
+        image_link = data.get("image_url")
+
+        if image_link:
+            return image_link
+        raise AppException(f"Image URL not found for {item_id} in {catalog_images_collection}")
 
     async def upsert_data_new(self, primary_key_col: str, collection_name: str, sync_type: str, data: List[Dict], bot: str,
                           user: Text):
@@ -944,14 +932,43 @@ class CognitionDataProcessor:
         customer = config.customer.replace(" ", "_")
         branch = config.branch_name.replace(" ", "_")
         catalog_data_collection = f"{customer}_{branch}_catalog_data"
+
         kv_items = processed_data.get("kv", [])
-        for item in kv_items:
-            collection_data = CollectionData(
+        incoming_data_map = {item["id"]: item for item in kv_items}
+        incoming_ids = set(incoming_data_map.keys())
+
+        existing_docs = CollectionData.objects(
+            collection_name=catalog_data_collection,
+            bot=bot,
+            status=True
+        )
+        existing_data_map = {doc.data.get("id"): doc for doc in existing_docs}
+        existing_ids = set(existing_data_map.keys())
+
+        for item_id, item in incoming_data_map.items():
+            if item_id in existing_data_map:
+                doc = existing_data_map[item_id]
+                doc.data = item
+                doc.timestamp = datetime.utcnow()
+                doc.user = user
+                doc.save()
+            else:
+                CollectionData(
+                    collection_name=catalog_data_collection,
+                    data=item,
+                    user=user,
+                    bot=bot,
+                    timestamp=datetime.utcnow(),
+                    status=True
+                ).save()
+
+        stale_ids = list(existing_ids - incoming_ids)
+        if stale_ids:
+            CollectionData.objects(
                 collection_name=catalog_data_collection,
-                data=item,
-                user=user,
                 bot=bot,
-                timestamp=datetime.utcnow(),
-                status=True
-            )
-            collection_data.save()
+                status=True,
+                data__id__in=stale_ids
+            ).delete()
+
+        return stale_ids

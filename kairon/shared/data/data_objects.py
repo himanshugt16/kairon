@@ -1054,7 +1054,7 @@ class UserOrgMappings(Document):
 @push_notification.apply
 class Integrations(Auditlog):
     bot = StringField(required=True)
-    connector_type = StringField(required=True)
+    provider = StringField(required=True)
     # connector_type = StringField(required=True, choices=Utility.get_channels)
     config = DictField(required=True)
     sync_type = StringField(required=True, default=None)
@@ -1062,7 +1062,7 @@ class Integrations(Auditlog):
     timestamp = DateTimeField(default=datetime.utcnow)
     meta_config = DictField()
 
-    meta = {"indexes": [{"fields": ["bot", "connector_type"]}]}
+    meta = {"indexes": [{"fields": ["bot", "provider"]}]}
 
 
 @auditlogger.log

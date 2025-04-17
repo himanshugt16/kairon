@@ -1,9 +1,10 @@
 from datetime import datetime
 
 from mongoengine import StringField, BooleanField, DateTimeField, DynamicDocument, DictField
-from kairon.shared.data.signals import push_notification
+from kairon.shared.data.signals import push_notification, auditlogger
 
 
+@auditlogger.log
 @push_notification.apply
 class CatalogSyncLogs(DynamicDocument):
     execution_id = StringField(required=True, unique=True)
@@ -21,5 +22,16 @@ class CatalogSyncLogs(DynamicDocument):
     sync_status = StringField(default="COMPLETED")
 
     meta = {"indexes": [{"fields": ["bot", "event_id", ("bot", "event_status", "-start_timestamp")]}]}
+
+
+@auditlogger.log
+@push_notification.apply
+class CatalogProviderMapping(DynamicDocument):
+    """
+    Stores field mappings (meta and kv) for each bot and provider combination.
+    """
+    provider = StringField(required=True)
+    meta_mappings = DictField(default=dict)
+    kv_mappings = DictField(default=dict)
 
 

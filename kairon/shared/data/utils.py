@@ -403,13 +403,13 @@ class DataUtility:
 
         token, _ = Authentication.generate_integration_token(
             integration_config['bot'], integration_config['user'], role=ACCESS_ROLES.DESIGNER.value,
-            access_limit=[f"/api/bot/integration/{integration_config['connector_type']}/{integration_config['event_type']}/{integration_config['bot']}/.+"],
+            access_limit=[f"/api/bot/integration/{integration_config['provider']}/{integration_config['sync_type']}/{integration_config['bot']}/.+"],
             token_type=TOKEN_TYPE.DATA_INTEGRATION.value
         )
 
         integration_endpoint = urljoin(
             Utility.environment['model']['agent']['url'],
-            f"/api/bot/integration/{integration_config['connector_type']}/{integration_config['event_type']}/{integration_config['bot']}/{token}"
+            f"/api/bot/integration/{integration_config['provider']}/{integration_config['sync_type']}/{integration_config['bot']}/{token}"
         )
         return integration_endpoint
 

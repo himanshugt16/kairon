@@ -14,9 +14,5 @@ class CatalogSyncBase:
         raise NotImplementedError("Provider not implemented")
 
     @abstractmethod
-    def enqueue(self, **kwargs):
-        raise NotImplementedError("Provider not implemented")
-
-    @abstractmethod
     def execute(self, **kwargs):
         raise NotImplementedError("Provider not implemented")
