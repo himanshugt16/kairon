@@ -1,5 +1,6 @@
 import json
 from datetime import datetime
+from typing import List
 
 from bson import ObjectId
 from loguru import logger
@@ -9,7 +10,6 @@ from kairon.shared.cognition.data_objects import CognitionSchema, ColumnMetadata
 from kairon.shared.cognition.processor import CognitionDataProcessor
 from kairon.shared.content_importer.data_objects import ContentValidationLogs
 from kairon.shared.data.constant import SYNC_STATUS, SyncType
-from kairon.exceptions import AppException
 from kairon.shared.data.data_models import CognitionSchemaRequest
 from kairon.shared.data.data_objects import BotSettings, BotSyncConfig
 from kairon.shared.data.processor import MongoProcessor
@@ -24,7 +24,8 @@ class CatalogSyncLogProcessor:
 
     @staticmethod
     def add_log(bot: str, user: str, provider: str = None, sync_type: str = None, validation_errors: dict = None,
-                raw_payload: dict = None, processed_payload: dict = None, exception: str = None, status: str = None, sync_status: str = SYNC_STATUS.INITIATED.value):
+                raw_payload: dict = None, processed_payload: dict = None, exception: str = None, status: str = None,
+                sync_status: str = SYNC_STATUS.INITIATED.value):
         """
         Adds or updates log for content importer event.
         @param bot: bot id.
@@ -80,7 +81,7 @@ class CatalogSyncLogProcessor:
                 Q(sync_status__ne=SYNC_STATUS.ABORTED.value)).get()
 
             if raise_exception:
-                raise AppException("Sync already in progress! Check logs.")
+                raise Exception("Sync already in progress! Check logs.")
             in_progress = True
         except DoesNotExist as e:
             logger.error(e)
@@ -100,9 +101,9 @@ class CatalogSyncLogProcessor:
         doc_count = CatalogSyncLogs.objects(
             bot=bot, start_timestamp__gte=today_start
         ).count()
-        if doc_count >= BotSettings.objects(bot=bot).get().content_importer_limit_per_day:
+        if doc_count >= BotSettings.objects(bot=bot).get().catalog_sync_limit_per_day:
             if raise_exception:
-                raise AppException("Daily limit exceeded.")
+                raise Exception("Daily limit exceeded.")
             else:
                 return True
         else:
@@ -138,10 +139,12 @@ class CatalogSyncLogProcessor:
         """
         Checks if the 'catalogue_table' exists in CognitionSchema for the given bot.
         """
-        return CognitionSchema.objects(bot=bot, collection_name="catalog").first() is not None
+        restaurant_name, branch_name = CognitionDataProcessor.get_restaurant_and_branch_name(bot)
+        catalog_name = f"{restaurant_name}_{branch_name}_catalog"
+        return CognitionSchema.objects(bot=bot, collection_name=catalog_name).first() is not None
 
     @staticmethod
-    def create_catalog_collection(bot: str, user: str, data):
+    def  create_catalog_collection(bot: str, user: str):
         """
         Creates a 'catalogue_table' collection in CognitionSchema for the given bot with predefined metadata fields.
         """
@@ -171,8 +174,10 @@ class CatalogSyncLogProcessor:
             }
             for col, data_type in column_definitions
         ]
+        restaurant_name, branch_name = CognitionDataProcessor.get_restaurant_and_branch_name(bot)
+        catalog_name = f"{restaurant_name}_{branch_name}_catalog"
         catalog_schema = CognitionSchemaRequest(
-            collection_name="catalog",
+            collection_name=catalog_name,
             metadata=metadata
         )
 
@@ -183,26 +188,6 @@ class CatalogSyncLogProcessor:
         return metadata_id
 
     @staticmethod
-    def extract_knowledge_vault_data(data, event_type):
-        """
-        Extracts required fields for knowledge vault storage from processed menu data.
-        - If event_type is "push_menu", include all required fields.
-        - Otherwise, include only available fields along with "id".
-        """
-        required_fields = ["title", "description", "price", "facebook_product_category", "availability"]
-
-        extracted_data = []
-        for item in data:
-            entry = {"id": item["id"]}
-            if event_type == "push_menu":
-                entry.update({field: item[field] for field in required_fields})
-            else:
-                entry.update({field: item[field] for field in required_fields if field in item})
-            extracted_data.append(entry)
-
-        return extracted_data
-
-    @staticmethod
     def validate_item_ids(json_data):
         """
         Validates that all items have an 'itemid' and extracts a list of valid category IDs.
@@ -211,7 +196,7 @@ class CatalogSyncLogProcessor:
         """
         for item in json_data.get("items", []):
             if "itemid" not in item:
-                raise AppException(f"Missing 'itemid' in item: {item}")
+                raise Exception(f"Missing 'itemid' in item: {item}")
 
     @staticmethod
     def validate_item_toggle_request(json_data: dict) -> None:
@@ -225,12 +210,12 @@ class CatalogSyncLogProcessor:
         body = json_data.get("body", {})
 
         if "inStock" not in body:
-            raise AppException("Missing required field: 'inStock'")
+            raise Exception("Missing required field: 'inStock'")
         if not isinstance(body["inStock"], bool):
-            raise AppException("'inStock' must be a boolean (true or false)")
+            raise Exception("'inStock' must be a boolean (true or false)")
 
         if "itemID" not in body:
-            raise AppException("Missing required field: 'itemID'")
+            raise Exception("Missing required field: 'itemID'")
 
     @staticmethod
     def validate_item_fields(bot, json_data, provider):
@@ -239,9 +224,9 @@ class CatalogSyncLogProcessor:
         Ensures 'item_categoryid' is within valid categories.
         Only runs if event_type is 'push_menu'.
         """
-        doc = CatalogProviderMapping.objects(bot=bot, provider=provider).first()
+        doc = CatalogProviderMapping.objects(provider=provider).first()
         if not doc:
-            raise ValueError(f"Metadata mappings not found for bot={bot} and provider={provider}")
+            raise Exception(f"Metadata mappings not found and provider={provider}")
 
         provider_mappings = {
             "meta": doc.meta_mappings,
@@ -260,82 +245,79 @@ class CatalogSyncLogProcessor:
         for item in json_data.get("items", []):
             missing_fields = [field for field in required_fields if field not in item]
             if missing_fields:
-                raise AppException(f"Missing fields {missing_fields} in item: {item}")
+                raise Exception(f"Missing fields {missing_fields} in item: {item}")
 
             if "item_categoryid" in item and item["item_categoryid"] not in valid_category_ids:
-                raise AppException(f"Invalid 'item_categoryid' {item['item_categoryid']} in item: {item}")
+                raise Exception(f"Invalid 'item_categoryid' {item['item_categoryid']} in item: {item}")
 
     @staticmethod
     def is_sync_type_allowed(bot: str, sync_type: str):
         config = BotSyncConfig.objects(branch_bot=bot).first()
         if not config:
-            raise AppException("No bot sync config found for bot")
+            raise Exception("No bot sync config found for bot")
 
         if sync_type == SyncType.push_menu and not config.process_push_menu:
-            raise AppException("Push menu processing is disabled for this bot.")
+            raise Exception("Push menu processing is disabled for this bot")
 
         if sync_type == SyncType.item_toggle and not config.process_item_toggle:
-            raise AppException("Item toggle is disabled for this bot.")
+            raise Exception("Item toggle is disabled for this bot")
 
 
     @staticmethod
     def is_ai_enabled(bot: str):
         config = BotSyncConfig.objects(branch_bot=bot).first()
         if not config:
-            raise AppException("No bot sync config found for bot")
+            raise Exception("No bot sync config found for bot")
         return config.ai_enabled
 
     @staticmethod
     def is_meta_enabled(bot: str):
         config = BotSyncConfig.objects(branch_bot=bot).first()
         if not config:
-            raise AppException("No bot sync config found for bot")
+            raise Exception("No bot sync config found for bot")
         return config.meta_enabled
 
     @staticmethod
     def validate_image_configurations(bot: str, user: str):
-        """
-        Validates image configuration before preprocessing:
+        restaurant_name, branch_name = CognitionDataProcessor.get_restaurant_and_branch_name(bot)
+        catalog_images_collection = f"{restaurant_name}_{branch_name}_catalog_images"
 
-        - If `is_enabled` is True:
-            - `image_s3_url` must be present in the bot's sync config.
-
-        - If `is_enabled` is False:
-            - Catalog collection `<Customer>_<Branch>_catalog_images` must exist.
-            - Each `item_id` must have a document with a valid `image_s3_url`.
-        """
-
-        config = BotSyncConfig.objects(branch_bot=bot).first()
-        if not config:
-            raise AppException(f"No bot sync config found for bot: {bot}")
-
-        customer = config.customer.replace(" ", "_")
-        branch = config.branch_name.replace(" ", "_")
-        catalog_images_collection = f"{customer}_{branch}_catalog_images"
-
-        if not CollectionData.objects(collection_name=catalog_images_collection).first():
-            raise AppException(f"Collection `{catalog_images_collection}` does not exist for bot: {bot}")
-
-        if not CollectionData.objects(collection_name=catalog_images_collection).first():
-            fallback_data = {
-                "itemid": f"{bot}global",
-                "image_url": ""  # You may want to populate this if needed
+        if not CollectionData.objects(bot=bot, collection_name=catalog_images_collection).first():
+            global_fallback_data = {
+                "image_type": "global",
+                "image_url":"",
+                "image_base64":""
             }
             CollectionData(
                 collection_name=catalog_images_collection,
-                data=fallback_data,
+                data=global_fallback_data,
                 user=user,
                 bot=bot,
                 status=True,
                 timestamp=datetime.utcnow()
             ).save()
 
-        fallback_item_id = f"{bot}_global"
         document = CollectionData.objects(
             collection_name=catalog_images_collection,
-            data__itemid=fallback_item_id
+            bot=bot,
+            data__image_type="global"
         ).first()
 
         if not document:
-            raise AppException(
-                f"Fallback image document `{fallback_item_id}` not found in `{catalog_images_collection}`")
+            raise Exception(
+                f"Global fallback image document not found in `{catalog_images_collection}`")
+
+        if not document.data.get("image_url"):
+            raise Exception(
+                f"Global fallback image URL not found")
+
+    @staticmethod
+    def get_execution_id_for_bot(bot: str):
+        doc = CatalogSyncLogs.objects(bot=bot).filter(
+            Q(sync_status__ne=SYNC_STATUS.COMPLETED.value) &
+            Q(sync_status__ne=SYNC_STATUS.FAILED.value)
+        ).order_by('-start_timestamp').first()
+
+        return doc.execution_id if doc else None
+
+

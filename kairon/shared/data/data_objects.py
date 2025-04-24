@@ -925,7 +925,7 @@ class BotSettings(Auditlog):
     cognition_columns_per_collection_limit = IntField(default=5)
     integrations_per_user_limit = IntField(default=3)
     live_agent_enabled = BooleanField(default=False)
-    # allow_catalog_sync = BooleanField(default=True)
+    catalog_sync_limit_per_day = IntField(default=5)
 
     meta = {"indexes": [{"fields": ["bot", ("bot", "status")]}]}
 
@@ -1052,10 +1052,9 @@ class UserOrgMappings(Document):
 
 @auditlogger.log
 @push_notification.apply
-class Integrations(Auditlog):
+class POSIntegrations(Auditlog):
     bot = StringField(required=True)
     provider = StringField(required=True)
-    # connector_type = StringField(required=True, choices=Utility.get_channels)
     config = DictField(required=True)
     sync_type = StringField(required=True, default=None)
     user = StringField(required=True)
@@ -1071,11 +1070,11 @@ class BotSyncConfig(Auditlog):
     process_push_menu = BooleanField(default=False)
     process_item_toggle = BooleanField(default=False)
     parent_bot = StringField(required=True)
-    customer = StringField(required=True)
+    restaurant_name = StringField(required=True)
     provider = StringField(required=True)
     branch_name = StringField(required=True)
     branch_bot = StringField(required=True)
     ai_enabled = BooleanField(default=False)
     meta_enabled = BooleanField(default=False)
-    default_logo_s3 = DictField()
     user = StringField(required=True)
+    timestamp = DateTimeField(default=datetime.utcnow)

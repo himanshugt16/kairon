@@ -2651,11 +2651,17 @@ class MailUtility:
 
     @staticmethod
     def __handle_catalog_sync_status(**kwargs):
-        first_name = kwargs.get("first_name")
-        current_status = kwargs.get("current_status")
+        bot = kwargs.get("bot")
+        executionID = kwargs.get("executionID")
+        sync_status = kwargs.get("sync_status")
+        message = kwargs.get("message")
+
         body = Utility.email_conf["email"]["templates"]["catalog_sync_status"]
-        body = body.replace("FIRST_NAME", first_name.capitalize())
-        body = body.replace("CURRENT_STATUS", current_status)
+
+        body = body.replace("BOT_ID", bot)
+        body = body.replace("EXECUTION_ID", executionID)
+        body = body.replace("SYNC_STATUS", sync_status)
+        body = body.replace("MESSAGE", message)
         subject = Utility.email_conf["email"]["templates"]["catalog_sync_status_subject"]
         return body, subject
 

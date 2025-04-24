@@ -2,6 +2,7 @@ import asyncio
 import json
 from typing import Text, List
 from urllib.parse import urljoin
+from loguru import logger
 import requests
 from kairon import Utility
 from kairon.shared.catalog_sync.data_objects import CatalogProviderMapping
@@ -13,15 +14,14 @@ class MetaProcessor:
 
     def __init__(self, access_token: Text, catalog_id:Text):
         self.catalog_id = catalog_id
-        self.meta_url = Utility.environment['meta']['url']
         self.access_token = access_token
         self.headers = {}
         self.processed_data = []
 
     def preprocess_data(self,bot: Text, data: List[dict], method: Text, provider: str):
-        doc = CatalogProviderMapping.objects(bot=bot, provider=provider).first()
+        doc = CatalogProviderMapping.objects(provider=provider).first()
         if not doc:
-            raise ValueError(f"Metadata mappings not found for bot={bot} and provider={provider}")
+            raise Exception(f"Metadata mappings not found for provider={provider}")
 
         meta_fields = list(doc.meta_mappings.keys())
 
@@ -65,29 +65,20 @@ class MetaProcessor:
         Sync the data to meta when event type is 'push_menu'
         """
         try:
-
             req = quote(json.dumps(self.processed_data))
-            base_url = "https://graph.facebook.com/v21.0/1880697869060042/batch"
+            base_url = f"https://graph.facebook.com/v21.0/{self.catalog_id}/batch"
             url = f"{base_url}?item_type=PRODUCT_ITEM&requests={req}"
 
             data = {
                 "access_token": self.access_token,
             }
 
-            try:
-                response = await asyncio.to_thread(requests.post, url, headers={}, data=data)
-                response.raise_for_status()
-                print("Status Code:", response.status_code)
-                print("Response JSON:", response.json())
-                print("Successfully synced push menu data to meta.")
-            except requests.exceptions.HTTPError as http_err:
-                print(f"HTTP error occurred: {http_err}")
-            except requests.exceptions.RequestException as req_err:
-                print(f"An error occurred: {req_err}")
-            except Exception as e:
-                print(f"An unexpected error occurred: {e}")
+            response = await asyncio.to_thread(requests.post, url, headers={}, data=data)
+            response.raise_for_status()
+            print("Response JSON:", response.json())
+            print("Successfully synced product items to Meta catalog(Push Menu)")
         except Exception as e:
-            print(f"Error syncing push menu data: {e}")
+            logger.exception(f"Error syncing product items to Meta catalog for push menu: {str(e)}")
             raise e
 
     async def update_meta_catalog(self):
@@ -96,27 +87,19 @@ class MetaProcessor:
         """
         try:
             req = quote(json.dumps(self.processed_data))
-            base_url = "https://graph.facebook.com/v21.0/1880697869060042/batch"
+            base_url = f"https://graph.facebook.com/v21.0/{self.catalog_id}/batch"
             url = f"{base_url}?item_type=PRODUCT_ITEM&requests={req}"
 
             data = {
                 "access_token": self.access_token,
             }
 
-            try:
-                response = await asyncio.to_thread(requests.post, url, headers={}, data=data)
-                response.raise_for_status()
-                print("Status Code:", response.status_code)
-                print("Response JSON:", response.json())
-                print("Successfully synced push menu data to meta.")
-            except requests.exceptions.HTTPError as http_err:
-                print(f"HTTP error occurred: {http_err} - Response: {response.text}")
-            except requests.exceptions.RequestException as req_err:
-                print(f"An error occurred: {req_err}")
-            except Exception as e:
-                print(f"An unexpected error occurred: {e}")
+            response = await asyncio.to_thread(requests.post, url, headers={}, data=data)
+            response.raise_for_status()
+            print("Response JSON:", response.json())
+            print("Successfully synced product items to Meta catalog(Item Toggle)")
         except Exception as e:
-            print(f"Error syncing push menu data: {e}")
+            logger.exception(f"Error syncing product items to Meta catalog for item toggle: {str(e)}")
             raise e
 
 
@@ -125,7 +108,6 @@ class MetaProcessor:
         Sync the data to meta when event type is 'push_menu'
         """
         try:
-
             req = quote(json.dumps(delete_payload))
             base_url = "https://graph.facebook.com/v21.0/1880697869060042/batch"
             url = f"{base_url}?requests={req}"
@@ -133,19 +115,10 @@ class MetaProcessor:
             data = {
                 "access_token": self.access_token,
             }
-
-            try:
-                response = await asyncio.to_thread(requests.post, url, headers={}, data=data)
-                response.raise_for_status()
-                print("Status Code:", response.status_code)
-                print("Response JSON:", response.json())
-                print("Successfully deleted data from meta.")
-            except requests.exceptions.HTTPError as http_err:
-                print(f"HTTP error occurred: {http_err}")
-            except requests.exceptions.RequestException as req_err:
-                print(f"An error occurred: {req_err}")
-            except Exception as e:
-                print(f"An unexpected error occurred: {e}")
+            response = await asyncio.to_thread(requests.post, url, headers={}, data=data)
+            response.raise_for_status()
+            print("Response JSON:", response.json())
+            print("Successfully deleted data from meta.")
         except Exception as e:
             print(f"Error deleting data from meta: {e}")
             raise e

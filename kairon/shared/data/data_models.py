@@ -1353,7 +1353,7 @@ class MetaConfig(BaseModel):
     access_token: str
     catalog_id: str
 
-class DataIntegrationRequest(BaseModel):
+class POSIntegrationRequest(BaseModel):
     provider: str
     config: dict
     meta_config: Optional[MetaConfig]

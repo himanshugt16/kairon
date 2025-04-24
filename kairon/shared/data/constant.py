@@ -112,12 +112,16 @@ class EVENT_STATUS(str, Enum):
 
 class SYNC_STATUS(str, Enum):
     INITIATED = "Initiated"
-    VALIDATING_REQUEST = "Request validation in progress"
-    VALIDATING_KV = "Knowledge vault processed data in progress"
+    VALIDATING_REQUEST = "Validating request"
+    VALIDATING_REQUEST_SUCCESS = "Validating request successful"
+    VALIDATING_FAILED = "Validation Failed"
+    VALIDATING_KNOWLEDGE_VAULT_DATA = "Validating Knowledge vault processed data"
     PREPROCESSING = "Preprocessing in progress"
+    PREPROCESSING_FAILED = "Preprocessing Failed"
     PREPROCESSING_COMPLETED = "Preprocessing Completed"
     SAVE = "Importing data to kairon"
     SAVE_META = "Importing data to Meta"
+    SYNC_FAILED = "Sync Failed"
     ENQUEUED = "Enqueued"
     COMPLETED = "Completed"
     FAILED = "Failed"

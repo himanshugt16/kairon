@@ -4,6 +4,7 @@ from loguru import logger
 
 from kairon.catalog_sync.definitions.factory import CatalogSyncFactory
 from kairon.events.definitions.base import EventsBase
+from kairon.shared.account.processor import AccountProcessor
 from kairon.shared.constants import EventClass
 from kairon.shared.data.constant import SyncType, SYNC_STATUS
 from kairon.shared.catalog_sync.catalog_sync_log_processor import CatalogSyncLogProcessor
@@ -63,13 +64,10 @@ class CatalogSync(EventsBase):
         """
         Execute the document content import event.
         """
+        AccountProcessor.load_system_properties()
         self.catalog_sync.data = kwargs.get("data", [])
         try:
             initiate_import, stale_primary_keys= await self.catalog_sync.preprocess(request_body=self.catalog_sync.data)
             await self.catalog_sync.execute(data=self.catalog_sync.data, initiate_import = initiate_import,stale_primary_keys = stale_primary_keys)
         except Exception as e:
             logger.error(str(e))
-            CatalogSyncLogProcessor.add_log(self.catalog_sync.bot, self.catalog_sync.user,
-                                                exception=str(e),
-                                                status="Failure",
-                                                sync_status=SYNC_STATUS.FAILED.value)

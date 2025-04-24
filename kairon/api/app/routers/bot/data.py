@@ -15,7 +15,7 @@ from kairon.shared.cognition.processor import CognitionDataProcessor
 from kairon.shared.concurrency.actors.factory import ActorFactory
 from kairon.shared.constants import ActorType, CatalogSyncClass
 from kairon.shared.constants import DESIGNER_ACCESS
-from kairon.shared.data.data_models import DataIntegrationRequest
+from kairon.shared.data.data_models import POSIntegrationRequest
 from kairon.shared.data.processor import MongoProcessor
 from kairon.shared.models import User
 from kairon.shared.utils import Utility
@@ -351,7 +351,7 @@ async def knowledge_vault_sync(
             error_code=400
         )
 
-    await cognition_processor.upsert_data_new(primary_key_col.lower(), collection_name.lower(), sync_type.lower(), data,
+    await cognition_processor.upsert_data(primary_key_col.lower(), collection_name.lower(), sync_type.lower(), data,
                                     current_user.get_bot(), current_user.get_user())
 
     return Response(
@@ -363,20 +363,23 @@ async def knowledge_vault_sync(
 
 
 @router.post("/integrations/add", response_model=Response)
-async def add_data_integration_config(
-    request_data: DataIntegrationRequest,
+async def add_pos_integration_config(
+    request_data: POSIntegrationRequest,
     sync_type: str,
     current_user: User = Security(Authentication.get_current_user_and_bot, scopes=DESIGNER_ACCESS),
 ):
     """
     Add data integration config
     """
+    CognitionDataProcessor.load_catalog_provider_mappings()
 
     if request_data.provider not in CatalogSyncClass.__members__.values():
-        return AppException("Invalid Provider")
+        raise AppException("Invalid Provider")
 
-    integration_endpoint = cognition_processor.save_data_integration_config(
+    CognitionDataProcessor.add_bot_sync_config(request_data, current_user.get_bot(), current_user.get_user())
+
+    integration_endpoint = cognition_processor.save_pos_integration_config(
         request_data.dict(), current_user.get_bot(), current_user.get_user(), sync_type
     )
 
-    return Response(message='Integration Complete', data=integration_endpoint)
+    return Response(message='POS Integration Complete', data=integration_endpoint)
